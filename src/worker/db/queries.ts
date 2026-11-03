@@ -218,9 +218,19 @@ function imageSortSql(sort: ImageSort): {
 } {
   switch (sort) {
     case "newest":
-      return { nullRank: "0", value: "i.created_at", direction: "DESC", comparison: "<" };
+      return {
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
+        value: "i.created_at",
+        direction: "DESC",
+        comparison: "<",
+      };
     case "oldest":
-      return { nullRank: "0", value: "i.created_at", direction: "ASC", comparison: ">" };
+      return {
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
+        value: "i.created_at",
+        direction: "ASC",
+        comparison: ">",
+      };
     case "capture-newest":
       return {
         nullRank: "CASE WHEN i.taken_at IS NULL THEN 1 ELSE 0 END",
@@ -237,32 +247,42 @@ function imageSortSql(sort: ImageSort): {
       };
     case "filename-asc":
       return {
-        nullRank: "0",
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
         value: "i.original_name COLLATE NOCASE",
         direction: "ASC",
         comparison: ">",
       };
     case "filename-desc":
       return {
-        nullRank: "0",
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
         value: "i.original_name COLLATE NOCASE",
         direction: "DESC",
         comparison: "<",
       };
     case "size-desc":
-      return { nullRank: "0", value: "i.size_bytes", direction: "DESC", comparison: "<" };
+      return {
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
+        value: "i.size_bytes",
+        direction: "DESC",
+        comparison: "<",
+      };
     case "size-asc":
-      return { nullRank: "0", value: "i.size_bytes", direction: "ASC", comparison: ">" };
+      return {
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
+        value: "i.size_bytes",
+        direction: "ASC",
+        comparison: ">",
+      };
     case "uploader-asc":
       return {
-        nullRank: "0",
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
         value: "COALESCE(i.uploaded_by, '') COLLATE NOCASE",
         direction: "ASC",
         comparison: ">",
       };
     case "uploader-desc":
       return {
-        nullRank: "0",
+        nullRank: "CASE WHEN i.id IS NULL THEN 1 ELSE 0 END",
         value: "COALESCE(i.uploaded_by, '') COLLATE NOCASE",
         direction: "DESC",
         comparison: "<",
