@@ -77,7 +77,7 @@ export default function Shell({
             aria-label="Go home"
           >
             <img src="/icons/icon-192.png" alt="" className="h-8 w-8 rounded-lg" />
-            Shared<span className="-ml-1 text-amber-400">Gallery</span>
+            Lomly<span className="-ml-1 text-amber-400">Gallery</span>
           </button>
           <div className="hidden sm:block">
             <ViewSwitcher route={route} onNavigate={onNavigate} orientation="top" />
