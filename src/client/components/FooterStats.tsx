@@ -11,7 +11,7 @@ function formatGB(bytes: number): string {
 }
 
 /**
- * Quiet gallery totals for the footer: photos, contributors, and storage
+ * Quiet gallery totals for the footer: items, contributors, and storage
  * used against the Cloudflare Free-plan R2 allowance.
  */
 export default function FooterStats() {
@@ -40,7 +40,7 @@ export default function FooterStats() {
   return (
     <div className="flex flex-col items-center gap-1.5 text-xs text-stone-500">
       <div className="flex flex-wrap items-center justify-center gap-x-2 tabular-nums">
-        <span>{stats.imageCount === 1 ? "1 photo" : `${stats.imageCount} photos`}</span>
+        <span>{stats.imageCount === 1 ? "1 item" : `${stats.imageCount} items`}</span>
         <span aria-hidden>·</span>
         <span>
           {stats.contributorCount === 1

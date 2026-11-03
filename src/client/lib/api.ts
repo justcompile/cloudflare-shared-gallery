@@ -6,6 +6,7 @@ import type {
   ApiStats,
   ApiUpdates,
   ImageFilter,
+  ImageSort,
   Paginated,
 } from "../../shared/types";
 import { getStoredDisplayName } from "./user";
@@ -88,12 +89,14 @@ export function listImages(opts: {
   cursor?: string | null;
   limit?: number;
   uploader?: string;
+  sort?: ImageSort;
 }): Promise<Paginated<ApiImage>> {
   const params = new URLSearchParams();
   params.set("filter", opts.filter ?? "all");
   if (opts.cursor) params.set("cursor", opts.cursor);
   if (opts.limit) params.set("limit", String(opts.limit));
   if (opts.uploader) params.set("uploader", opts.uploader);
+  if (opts.sort) params.set("sort", opts.sort);
   return request("GET", `/api/images?${params}`);
 }
 
@@ -117,6 +120,10 @@ export function deleteImage(id: string): Promise<void> {
   return request("DELETE", `/api/images/${encodeURIComponent(id)}`);
 }
 
+export function deleteImages(imageIds: string[]): Promise<{ deleted: number }> {
+  return request("POST", "/api/images/bulk-delete", { imageIds });
+}
+
 export function listDeleted(): Promise<ApiImage[]> {
   return request("GET", "/api/images/deleted");
 }
@@ -126,10 +133,10 @@ export function restoreImage(id: string): Promise<ApiImage> {
 }
 
 /**
- * Uploads one image as a streamed body via XHR (fetch has no upload
+ * Uploads one media file as a streamed body via XHR (fetch has no upload
  * progress). Resolves with the created image record.
  */
-export function uploadImage(
+export function uploadMedia(
   file: File,
   onProgress: (fraction: number) => void,
 ): Promise<ApiImage> {
@@ -177,11 +184,12 @@ export function createCollection(input: {
 
 export function getCollection(
   id: string,
-  opts: { cursor?: string | null; limit?: number } = {},
+  opts: { cursor?: string | null; limit?: number; sort?: ImageSort } = {},
 ): Promise<ApiCollectionDetail> {
   const params = new URLSearchParams();
   if (opts.cursor) params.set("cursor", opts.cursor);
   if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.sort) params.set("sort", opts.sort);
   const qs = params.size > 0 ? `?${params}` : "";
   return request("GET", `/api/collections/${encodeURIComponent(id)}${qs}`);
 }

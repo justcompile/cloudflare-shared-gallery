@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApiImage } from "../../shared/types";
+import type { ApiImage, ImageSort } from "../../shared/types";
 import * as api from "./api";
 import { subscribe } from "./events";
 
@@ -11,6 +11,8 @@ export type FeedSource =
 
 export interface ImageFeed {
   images: ApiImage[];
+  sort: ImageSort;
+  setSort: (sort: ImageSort) => void;
   loading: boolean;
   /** True once the first page has arrived (even if empty). */
   ready: boolean;
@@ -28,6 +30,7 @@ const PAGE_SIZE = 60;
 /** Cursor-paginated image feed for a view, auto-refreshing on app events. */
 export function useImageFeed(source: FeedSource): ImageFeed {
   const [images, setImages] = useState<ApiImage[]>([]);
+  const [sort, setSort] = useState<ImageSort>("newest");
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -50,7 +53,11 @@ export function useImageFeed(source: FeedSource): ImageFeed {
       try {
         let page;
         if (source.kind === "collection") {
-          const detail = await api.getCollection(source.id, { cursor: after, limit: PAGE_SIZE });
+          const detail = await api.getCollection(source.id, {
+            cursor: after,
+            limit: PAGE_SIZE,
+            sort,
+          });
           page = { items: detail.images, cursor: detail.cursor };
         } else if (source.kind === "uploader") {
           page = await api.listImages({
@@ -58,12 +65,14 @@ export function useImageFeed(source: FeedSource): ImageFeed {
             uploader: source.who,
             cursor: after,
             limit: PAGE_SIZE,
+            sort,
           });
         } else {
           page = await api.listImages({
             filter: source.kind === "all" ? "all" : "untagged",
             cursor: after,
             limit: PAGE_SIZE,
+            sort,
           });
         }
         if (gen !== generation.current) return;
@@ -79,7 +88,7 @@ export function useImageFeed(source: FeedSource): ImageFeed {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sourceKey],
+    [sourceKey, sort],
   );
 
   const refresh = useCallback(() => {
@@ -117,5 +126,17 @@ export function useImageFeed(source: FeedSource): ImageFeed {
     setImages((prev) => prev.filter((i) => i.id !== id));
   }, []);
 
-  return { images, loading, ready, error, hasMore, loadMore, refresh, replaceImage, removeImage };
+  return {
+    images,
+    sort,
+    setSort,
+    loading,
+    ready,
+    error,
+    hasMore,
+    loadMore,
+    refresh,
+    replaceImage,
+    removeImage,
+  };
 }

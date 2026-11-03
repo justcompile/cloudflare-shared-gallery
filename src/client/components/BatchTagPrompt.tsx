@@ -52,7 +52,7 @@ export default function BatchTagPrompt({
       onClose();
     } catch (err) {
       setPhase("error");
-      setError(err instanceof Error ? err.message : "Couldn't add the photos");
+      setError(err instanceof Error ? err.message : "Couldn't add the items");
     }
   }
 
@@ -71,7 +71,7 @@ export default function BatchTagPrompt({
       >
         <div className="border-b border-stone-800 px-5 py-4">
           <h2 id="batch-tag-title" className="text-lg font-semibold text-stone-100">
-            Put these {batch.count} photos in a collection?
+            Put these {batch.count} items in a collection?
           </h2>
           <p className="mt-0.5 text-xs text-stone-500">
             Uploads carry on in the background either way.
@@ -82,7 +82,7 @@ export default function BatchTagPrompt({
           <div className="flex flex-col items-center gap-3 px-5 py-10" role="status">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-700 border-t-amber-400" />
             <p className="text-sm text-stone-400">
-              Filing photos as soon as the uploads finish…
+              Filing items as soon as the uploads finish…
             </p>
           </div>
         ) : (
@@ -148,7 +148,7 @@ export default function BatchTagPrompt({
                   disabled={!canApply}
                   className="min-h-11 rounded-xl bg-amber-400 px-5 text-sm font-medium text-stone-950 hover:bg-amber-300 disabled:opacity-50"
                 >
-                  {phase === "error" ? "Try again" : `Add ${batch.count} photos`}
+                  {phase === "error" ? "Try again" : `Add ${batch.count} items`}
                 </button>
               </div>
             </div>

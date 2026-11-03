@@ -2,7 +2,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { IconDeviceCamera, IconImage } from "./icons";
 
 /**
- * Upload trigger. `accept="image/*"` opens the photo library with
+ * Upload trigger. The library accepts supported images and videos with
  * multi-select; `withCameraSheet` adds an action sheet offering direct
  * camera capture (`capture="environment"`) on mobile. Chosen files are
  * handed to onFiles (the Shell gates on display name and feeds the shared
@@ -34,7 +34,13 @@ export default function UploadButton({
 
   return (
     <>
-      <input ref={libraryRef} type="file" accept="image/*" multiple {...inputProps} />
+      <input
+        ref={libraryRef}
+        type="file"
+        accept="image/*,video/mp4,video/webm,video/quicktime"
+        multiple
+        {...inputProps}
+      />
       {withCameraSheet && (
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" {...inputProps} />
       )}
@@ -51,7 +57,7 @@ export default function UploadButton({
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
-          aria-label="Add photos"
+          aria-label="Add media"
           onClick={(e) => {
             if (e.target === e.currentTarget) setSheetOpen(false);
           }}
@@ -67,7 +73,7 @@ export default function UploadButton({
               }}
               className="flex w-full min-h-12 items-center gap-3 rounded-xl px-4 text-left text-base text-stone-100 hover:bg-stone-800"
             >
-              <IconImage className="text-stone-400" /> Choose from library
+              <IconImage className="text-stone-400" /> Choose photos or videos
             </button>
             <button
               onClick={() => {

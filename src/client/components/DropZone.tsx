@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * Page-wide drag-and-drop target. Dragging files anywhere over the app shows
- * a full-screen overlay; dropping hands every image file (including files
- * inside dropped folders) to onFiles. Non-image files are skipped.
+ * a full-screen overlay; dropping hands every image or video file (including
+ * files inside dropped folders) to onFiles. Other files are skipped.
  */
 export default function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const [dragging, setDragging] = useState(false);
@@ -47,8 +47,10 @@ export default function DropZone({ onFiles }: { onFiles: (files: File[]) => void
         }
       }
       void collectFiles(entries, plainFiles).then((files) => {
-        const images = files.filter((f) => f.type.startsWith("image/"));
-        if (images.length > 0) onFiles(images);
+        const media = files.filter(
+          (f) => f.type.startsWith("image/") || f.type.startsWith("video/"),
+        );
+        if (media.length > 0) onFiles(media);
       });
     };
 
@@ -74,8 +76,8 @@ export default function DropZone({ onFiles }: { onFiles: (files: File[]) => void
     >
       <div className="mx-6 flex flex-col items-center gap-3 rounded-3xl border-2 border-dashed border-amber-400/80 bg-stone-900/70 px-10 py-12 text-center shadow-2xl">
         <img src="/icons/icon-192.png" alt="" className="h-16 w-16 rounded-2xl shadow-lg" />
-        <p className="text-xl font-semibold text-stone-100">Drop photos to upload</p>
-        <p className="text-sm text-stone-400">Folders work too. Anything that isn't an image is skipped</p>
+        <p className="text-xl font-semibold text-stone-100">Drop photos and videos to upload</p>
+        <p className="text-sm text-stone-400">Folders work too. Other file types are skipped</p>
       </div>
     </div>
   );

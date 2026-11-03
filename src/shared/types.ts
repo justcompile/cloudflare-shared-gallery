@@ -66,6 +66,25 @@ export interface Paginated<T> {
 
 export type ImageFilter = "all" | "untagged";
 
+export const IMAGE_SORTS = [
+  "newest",
+  "oldest",
+  "capture-newest",
+  "capture-oldest",
+  "filename-asc",
+  "filename-desc",
+  "size-desc",
+  "size-asc",
+  "uploader-asc",
+  "uploader-desc",
+] as const;
+
+export type ImageSort = (typeof IMAGE_SORTS)[number];
+
+export function isImageSort(value: string): value is ImageSort {
+  return IMAGE_SORTS.some((sort) => sort === value);
+}
+
 export interface ApiError {
   error: string;
 }

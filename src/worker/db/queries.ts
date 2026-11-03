@@ -3,6 +3,7 @@ import type {
   ApiImage,
   ApiImageMembership,
   ImageFilter,
+  ImageSort,
   Paginated,
 } from "../../shared/types";
 
@@ -81,12 +82,13 @@ function rowToCollection(row: CollectionListRow, cover: ApiImage | null): ApiCol
 /* ------------------------------ pagination ------------------------------ */
 
 interface CursorPayload {
-  t: number; // created_at of the last item
+  s: ImageSort;
+  n: number; // null-rank of the last item
+  v: number | string; // sort value of the last item
   i: string; // id of the last item (tiebreak)
 }
 
-export function encodeCursor(lastCreatedAt: number, lastId: string): string {
-  const payload: CursorPayload = { t: lastCreatedAt, i: lastId };
+export function encodeCursor(payload: CursorPayload): string {
   return btoa(JSON.stringify(payload)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
@@ -94,7 +96,14 @@ export function decodeCursor(cursor: string): CursorPayload | null {
   try {
     const b64 = cursor.replaceAll("-", "+").replaceAll("_", "/");
     const parsed = JSON.parse(atob(b64)) as CursorPayload;
-    if (typeof parsed.t !== "number" || typeof parsed.i !== "string") return null;
+    if (
+      typeof parsed.s !== "string" ||
+      typeof parsed.n !== "number" ||
+      (typeof parsed.v !== "number" && typeof parsed.v !== "string") ||
+      typeof parsed.i !== "string"
+    ) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -170,9 +179,12 @@ export async function listImages(
     limit: number;
     /** Restrict to photos uploaded by this display name. */
     uploader?: string | null;
+    sort: ImageSort;
   },
 ): Promise<Paginated<ApiImage>> {
-  const after = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const decoded = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const after = decoded?.s === opts.sort ? decoded : null;
+  const sort = imageSortSql(opts.sort);
   const join =
     opts.filter === "untagged" ? `LEFT JOIN image_collections ic ON ic.image_id = i.id` : "";
   const where: string[] = [`i.deleted_at IS NULL`];
@@ -183,26 +195,116 @@ export async function listImages(
     binds.push(opts.uploader);
   }
   if (after) {
-    where.push(`(i.created_at < ? OR (i.created_at = ? AND i.id < ?))`);
-    binds.push(after.t, after.t, after.i);
+    where.push(
+      `(${sort.nullRank} > ? OR (${sort.nullRank} = ? AND (${sort.value} ${sort.comparison} ? OR (${sort.value} = ? AND i.id ${sort.comparison} ?))))`,
+    );
+    binds.push(after.n, after.n, after.v, after.v, after.i);
   }
   binds.push(opts.limit + 1);
 
   const sql = `SELECT i.* FROM images i ${join}
      WHERE ${where.join(" AND ")}
-     ORDER BY i.created_at DESC, i.id DESC
+     ORDER BY ${sort.nullRank} ASC, ${sort.value} ${sort.direction}, i.id ${sort.direction}
      LIMIT ?`;
   const { results } = await db.prepare(sql).bind(...binds).all<ImageRow>();
-  return paginate(results, opts.limit);
+  return paginate(results, opts.limit, opts.sort);
 }
 
-function paginate(rows: ImageRow[], limit: number): Paginated<ApiImage> {
+function imageSortSql(sort: ImageSort): {
+  nullRank: string;
+  value: string;
+  direction: "ASC" | "DESC";
+  comparison: ">" | "<";
+} {
+  switch (sort) {
+    case "newest":
+      return { nullRank: "0", value: "i.created_at", direction: "DESC", comparison: "<" };
+    case "oldest":
+      return { nullRank: "0", value: "i.created_at", direction: "ASC", comparison: ">" };
+    case "capture-newest":
+      return {
+        nullRank: "CASE WHEN i.taken_at IS NULL THEN 1 ELSE 0 END",
+        value: "COALESCE(i.taken_at, 0)",
+        direction: "DESC",
+        comparison: "<",
+      };
+    case "capture-oldest":
+      return {
+        nullRank: "CASE WHEN i.taken_at IS NULL THEN 1 ELSE 0 END",
+        value: "COALESCE(i.taken_at, 0)",
+        direction: "ASC",
+        comparison: ">",
+      };
+    case "filename-asc":
+      return {
+        nullRank: "0",
+        value: "i.original_name COLLATE NOCASE",
+        direction: "ASC",
+        comparison: ">",
+      };
+    case "filename-desc":
+      return {
+        nullRank: "0",
+        value: "i.original_name COLLATE NOCASE",
+        direction: "DESC",
+        comparison: "<",
+      };
+    case "size-desc":
+      return { nullRank: "0", value: "i.size_bytes", direction: "DESC", comparison: "<" };
+    case "size-asc":
+      return { nullRank: "0", value: "i.size_bytes", direction: "ASC", comparison: ">" };
+    case "uploader-asc":
+      return {
+        nullRank: "0",
+        value: "COALESCE(i.uploaded_by, '') COLLATE NOCASE",
+        direction: "ASC",
+        comparison: ">",
+      };
+    case "uploader-desc":
+      return {
+        nullRank: "0",
+        value: "COALESCE(i.uploaded_by, '') COLLATE NOCASE",
+        direction: "DESC",
+        comparison: "<",
+      };
+  }
+}
+
+function rowSortValue(row: ImageRow, sort: ImageSort): number | string {
+  switch (sort) {
+    case "newest":
+    case "oldest":
+      return row.created_at;
+    case "capture-newest":
+    case "capture-oldest":
+      return row.taken_at ?? 0;
+    case "filename-asc":
+    case "filename-desc":
+      return row.original_name;
+    case "size-desc":
+    case "size-asc":
+      return row.size_bytes;
+    case "uploader-asc":
+    case "uploader-desc":
+      return row.uploaded_by ?? "";
+  }
+}
+
+function paginate(rows: ImageRow[], limit: number, sort: ImageSort): Paginated<ApiImage> {
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   return {
     items: page.map(rowToImage),
-    cursor: hasMore && last ? encodeCursor(last.created_at, last.id) : null,
+    cursor:
+      hasMore && last
+        ? encodeCursor({
+            s: sort,
+            n: sort.startsWith("capture-") && last.taken_at === null ? 1 : 0,
+            v: rowSortValue(last, sort),
+            i: last.id,
+          })
+        : null,
   };
 }
 
@@ -239,6 +341,25 @@ export async function softDeleteImage(
     .bind(now, deletedBy, now, id)
     .run();
   return res.meta.changes > 0;
+}
+
+export async function softDeleteImages(
+  db: D1Database,
+  ids: string[],
+  deletedBy: string | null,
+  now: number,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const placeholders = ids.map(() => "?").join(", ");
+  const res = await db
+    .prepare(
+      `UPDATE images
+       SET deleted_at = ?, deleted_by = ?, updated_at = ?
+       WHERE deleted_at IS NULL AND id IN (${placeholders})`,
+    )
+    .bind(now, deletedBy, now, ...ids)
+    .run();
+  return res.meta.changes;
 }
 
 export async function restoreImage(db: D1Database, id: string, now: number): Promise<boolean> {
@@ -436,20 +557,25 @@ export async function deleteCollection(db: D1Database, id: string): Promise<bool
 export async function listCollectionImages(
   db: D1Database,
   collectionId: string,
-  opts: { cursor: string | null; limit: number },
+  opts: { cursor: string | null; limit: number; sort: ImageSort },
 ): Promise<Paginated<ApiImage>> {
-  const after = opts.cursor ? decodeCursor(opts.cursor) : null;
-  const cursorWhere = after ? `AND (i.created_at < ?2 OR (i.created_at = ?2 AND i.id < ?3))` : "";
+  const decoded = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const after = decoded?.s === opts.sort ? decoded : null;
+  const sort = imageSortSql(opts.sort);
+  const cursorWhere = after
+    ? `AND (${sort.nullRank} > ? OR (${sort.nullRank} = ? AND (${sort.value} ${sort.comparison} ? OR (${sort.value} = ? AND i.id ${sort.comparison} ?))))`
+    : "";
   const sql = `SELECT i.* FROM images i
      JOIN image_collections ic ON ic.image_id = i.id
      WHERE ic.collection_id = ?1 AND i.deleted_at IS NULL ${cursorWhere}
-     ORDER BY i.created_at DESC, i.id DESC
-     LIMIT ${after ? "?4" : "?2"}`;
-  const stmt = after
-    ? db.prepare(sql).bind(collectionId, after.t, after.i, opts.limit + 1)
-    : db.prepare(sql).bind(collectionId, opts.limit + 1);
+     ORDER BY ${sort.nullRank} ASC, ${sort.value} ${sort.direction}, i.id ${sort.direction}
+     LIMIT ?`;
+  const binds: (string | number)[] = [collectionId];
+  if (after) binds.push(after.n, after.n, after.v, after.v, after.i);
+  binds.push(opts.limit + 1);
+  const stmt = db.prepare(sql).bind(...binds);
   const { results } = await stmt.all<ImageRow>();
-  return paginate(results, opts.limit);
+  return paginate(results, opts.limit, opts.sort);
 }
 
 /** Adds images to a collection, idempotently. Returns how many rows were new. */

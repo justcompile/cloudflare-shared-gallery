@@ -1,9 +1,9 @@
 /**
- * Image content checks and dimension extraction on upload.
+ * Media content checks and image dimension extraction on upload.
  *
  * Dimensions come from the Images binding's `.info()` (free — it does not
  * count against the 5,000 transformations/30 days allowance). Content-type
- * verification uses magic-byte sniffing on the first bytes so a non-image
+ * verification uses magic-byte sniffing on the first bytes so a non-media
  * payload with a spoofed Content-Type header is rejected.
  */
 
@@ -13,7 +13,7 @@ export interface ImageDimensions {
 }
 
 /** Sniffs the real content type from the first bytes of the object. */
-export function sniffImageType(bytes: Uint8Array): string | null {
+export function sniffMediaType(bytes: Uint8Array): string | null {
   if (bytes.length < 12) return null;
   // JPEG: FF D8 FF
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
@@ -58,6 +58,19 @@ export function sniffImageType(bytes: Uint8Array): string | null {
   if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
     const brand = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
     if (brand === "avif" || brand === "avis") return "image/avif";
+    if (brand === "qt  ") return "video/quicktime";
+    if (
+      brand.startsWith("iso") ||
+      ["mp41", "mp42", "avc1", "M4V ", "M4VH", "M4VP", "MSNV", "dash", "cmfc", "cmfs"].includes(
+        brand,
+      )
+    ) {
+      return "video/mp4";
+    }
+  }
+  // WebM and Matroska share the EBML header signature.
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+    return "video/webm";
   }
   return null;
 }

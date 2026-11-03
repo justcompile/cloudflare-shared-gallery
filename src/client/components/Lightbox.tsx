@@ -14,7 +14,7 @@ import {
 } from "./icons";
 
 /**
- * Full-screen lightbox over the current view's image set.
+ * Full-screen viewer over the current view's media set.
  * Desktop: arrow keys navigate, Escape closes, focus is trapped.
  * Touch: horizontal swipe navigates, downward swipe or backdrop tap closes.
  */
@@ -40,6 +40,7 @@ export default function Lightbox({
   onEditCollections?: (detail: ApiImageDetail) => void;
 }) {
   const image = images[index];
+  const isVideo = image?.contentType.startsWith("video/") ?? false;
   const containerRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<Element | null>(null);
 
@@ -85,7 +86,9 @@ export default function Lightbox({
   // Preload neighbours so navigation feels instant.
   useEffect(() => {
     for (const neighbour of [images[index - 1], images[index + 1]]) {
-      if (neighbour) new Image().src = api.mediaUrl(neighbour.mediaKey, "full");
+      if (neighbour && !neighbour.contentType.startsWith("video/")) {
+        new Image().src = api.mediaUrl(neighbour.mediaKey, "full");
+      }
     }
     if (onNearEnd && index >= images.length - 3) onNearEnd();
   }, [index, images, onNearEnd]);
@@ -167,7 +170,7 @@ export default function Lightbox({
       onImageDeleted(id);
     } catch {
       setConfirmingDelete(false);
-      setActionError("Couldn't delete the photo. Check your connection and try again.");
+      setActionError("Couldn't delete the item. Check your connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -230,7 +233,7 @@ export default function Lightbox({
         <div className="flex items-center gap-1">
           <button
             onClick={() => setShowInfo((v) => !v)}
-            aria-label="Photo details"
+            aria-label="Item details"
             aria-pressed={showInfo}
             aria-keyshortcuts="i"
             className={`flex h-11 w-11 items-center justify-center rounded-full text-lg hover:bg-white/10 ${
@@ -260,7 +263,7 @@ export default function Lightbox({
           <button
             onClick={() => void deleteCurrent()}
             disabled={busy}
-            aria-label={confirmingDelete ? "Tap again to move to Recently deleted" : "Delete photo"}
+            aria-label={confirmingDelete ? "Tap again to move to Recently deleted" : "Delete item"}
             className={`flex h-11 items-center justify-center rounded-full px-3 text-lg hover:bg-white/10 ${
               confirmingDelete ? "bg-rose-600/80 text-sm font-medium text-white" : "w-11"
             }`}
@@ -270,33 +273,45 @@ export default function Lightbox({
         </div>
       </div>
 
-      {/* Image area — backdrop tap closes, tap on image does not */}
+      {/* Media area — backdrop tap closes, tap on media does not */}
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
       <div
         className="relative flex min-h-0 flex-1 items-center justify-center"
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
+        onTouchStart={isVideo ? undefined : onTouchStart}
+        onTouchMove={isVideo ? undefined : onTouchMove}
+        onTouchEnd={isVideo ? undefined : onTouchEnd}
       >
-        <img
-          key={image.id}
-          src={api.mediaUrl(image.mediaKey, "full")}
-          alt={caption ?? image.originalName}
-          className="max-h-full max-w-full select-none object-contain transition-transform duration-75 motion-reduce:transition-none"
-          style={
-            drag
-              ? { transform: `translate(${drag.dx}px, ${drag.dy}px)`, opacity: drag.dy > 40 ? 0.7 : 1 }
-              : undefined
-          }
-          draggable={false}
-        />
+        {isVideo ? (
+          <video
+            key={image.id}
+            src={api.mediaUrl(image.mediaKey)}
+            aria-label={caption ?? image.originalName}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-full max-w-full"
+          />
+        ) : (
+          <img
+            key={image.id}
+            src={api.mediaUrl(image.mediaKey, "full")}
+            alt={caption ?? image.originalName}
+            className="max-h-full max-w-full select-none object-contain transition-transform duration-75 motion-reduce:transition-none"
+            style={
+              drag
+                ? { transform: `translate(${drag.dx}px, ${drag.dy}px)`, opacity: drag.dy > 40 ? 0.7 : 1 }
+                : undefined
+            }
+            draggable={false}
+          />
+        )}
         {index > 0 && (
           <button
             onClick={prev}
-            aria-label="Previous photo"
+            aria-label="Previous item"
             className="absolute left-2 top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-xl text-white hover:bg-black/70 sm:flex"
           >
             <IconChevronLeft width="0.9em" height="0.9em" />
@@ -305,7 +320,7 @@ export default function Lightbox({
         {index < images.length - 1 && (
           <button
             onClick={next}
-            aria-label="Next photo"
+            aria-label="Next item"
             className={`absolute top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-xl text-white transition-[right] duration-200 hover:bg-black/70 sm:flex ${
               showInfo ? "sm:right-[356px]" : "right-2"
             }`}
@@ -329,7 +344,7 @@ export default function Lightbox({
               onChange={(e) => setCaptionDraft(e.target.value)}
               maxLength={500}
               rows={2}
-              placeholder="Describe this photo (used as alt text)"
+              placeholder="Describe this item"
               aria-label="Caption"
               className="w-full rounded-lg border border-stone-700 bg-stone-900 px-3 py-2 text-sm outline-none focus:border-amber-400"
             />
@@ -371,7 +386,7 @@ export default function Lightbox({
             <button
               onClick={() => navigateTo({ name: "uploader", who: uploadedBy })}
               className="rounded underline-offset-2 hover:text-stone-300 hover:underline"
-              aria-label={`See all photos uploaded by ${uploadedBy}`}
+              aria-label={`See all items uploaded by ${uploadedBy}`}
             >
               Uploaded by {uploadedBy}
             </button>
@@ -406,7 +421,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /**
- * Details overlay: a floating glass card over the photo on desktop, a bottom
+ * Details overlay: a floating glass card over the media on desktop, a bottom
  * sheet on mobile. Toggled by the info button or the "i" key.
  */
 function InfoPane({
@@ -504,7 +519,7 @@ function InfoPane({
               <button
                 onClick={() => navigateTo({ name: "uploader", who: image.uploadedBy! })}
                 className="rounded text-stone-300 underline decoration-stone-600 underline-offset-2 hover:text-amber-400"
-                aria-label={`See all photos uploaded by ${image.uploadedBy}`}
+                aria-label={`See all items uploaded by ${image.uploadedBy}`}
               >
                 {image.uploadedBy}
               </button>

@@ -4,7 +4,7 @@ import { IconHome, IconImage, IconStack } from "./icons";
 
 const TABS: { route: Route; label: string; Icon: ComponentType<SVGProps<SVGSVGElement>> }[] = [
   { route: { name: "root" }, label: "Home", Icon: IconHome },
-  { route: { name: "photos" }, label: "Photos", Icon: IconImage },
+  { route: { name: "photos" }, label: "Media", Icon: IconImage },
   { route: { name: "collections" }, label: "Collections", Icon: IconStack },
 ];
 

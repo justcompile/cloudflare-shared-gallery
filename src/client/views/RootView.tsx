@@ -10,7 +10,7 @@ import { IconImage } from "../components/icons";
 
 /**
  * Root (default home): a file-explorer style view — collection folders
- * first, then the untagged loose photos below them.
+ * first, then the untagged loose media below them.
  */
 export default function RootView({
   onOpenCollection,
@@ -42,7 +42,7 @@ export default function RootView({
       <EmptyState
         icon={<img src="/icons/icon-192.png" alt="" className="mx-auto h-16 w-16 rounded-2xl" />}
         title="Your gallery is empty"
-        message="Tap the + button to upload the first photos. Anyone with the shared password can add theirs too."
+        message="Tap the + button to upload the first photos or videos. Anyone with the shared password can add theirs too."
       />
     );
   }
@@ -67,19 +67,19 @@ export default function RootView({
           feed={feed}
           header={
             <h2 className="truncate text-sm font-medium uppercase tracking-widest text-stone-500">
-              Loose photos
+              Loose media
             </h2>
           }
           emptyState={
             noCollections ? (
               <EmptyState
                 icon={<IconImage />}
-                title="No photos yet"
-                message="Tap the + button to add the first photos to the gallery."
+                title="No media yet"
+                message="Tap the + button to add photos or videos to the gallery."
               />
             ) : (
               <p className="rounded-xl border border-dashed border-stone-800 px-4 py-8 text-center text-sm text-stone-500">
-                Everything is filed away, no loose photos. New uploads appear here until they're
+                Everything is filed away, no loose media. New uploads appear here until they're
                 added to a collection.
               </p>
             )

@@ -7,7 +7,7 @@ import PhotoSection from "../components/PhotoSection";
 import EmptyState from "../components/EmptyState";
 import { IconStack } from "../components/icons";
 
-/** One collection: header with rename/cover/delete controls plus its photos. */
+/** One collection: header with rename/cover/delete controls plus its media. */
 export default function CollectionDetail({
   id,
   onBack,
@@ -128,7 +128,7 @@ export default function CollectionDetail({
               <p className="mt-1 max-w-prose text-sm text-stone-400">{collection.description}</p>
             )}
             <p className="mt-1 text-xs text-stone-500">
-              {collection.memberCount === 1 ? "1 photo" : `${collection.memberCount} photos`}
+              {collection.memberCount === 1 ? "1 item" : `${collection.memberCount} items`}
               {" · Created by "}
               {collection.createdBy ?? "Unknown"}
             </p>
@@ -208,7 +208,7 @@ export default function CollectionDetail({
           <EmptyState
             icon={<IconStack />}
             title="Nothing in here yet"
-            message="Select photos in Home or Photos and choose “Add to collection” to file them here."
+            message="Select photos or videos in Home or Media and choose “Add to collection” to file them here."
           />
         }
         extraSelectionActions={({ selectedIds, clear }) => (

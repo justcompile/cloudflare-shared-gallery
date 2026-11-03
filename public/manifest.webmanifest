@@ -1,6 +1,6 @@
 {
-  "name": "Shared Gallery",
-  "short_name": "Gallery",
+  "name": "Photos",
+  "short_name": "Photos",
   "description": "A private shared photo gallery for people who know the password.",
   "start_url": "/",
   "scope": "/",

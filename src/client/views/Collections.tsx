@@ -70,7 +70,7 @@ export default function Collections({
       <EmptyState
         icon={<IconStack />}
         title="No collections yet"
-        message="Collections are virtual folders, so a photo can live in as many as you like. Select photos in any grid and choose “Add to collection” to create one."
+        message="Collections are virtual folders, so photos and videos can live in as many as you like. Select items in any grid and choose “Add to collection” to create one."
       />
     );
   }

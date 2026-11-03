@@ -4,6 +4,7 @@ import * as api from "../lib/api";
 import { emit } from "../lib/events";
 import EmptyState from "../components/EmptyState";
 import { IconTrash } from "../components/icons";
+import VideoPlaceholder from "../components/VideoPlaceholder";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_DAYS = 30;
@@ -12,7 +13,7 @@ function daysLeft(deletedAt: number): number {
   return Math.max(0, Math.ceil((deletedAt + RECOVERY_DAYS * DAY_MS - Date.now()) / DAY_MS));
 }
 
-/** Recently deleted: photos wait here 30 days and can be restored by anyone. */
+/** Recently deleted: media waits here 30 days and can be restored by anyone. */
 export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
   const [items, setItems] = useState<ApiImage[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
       emit("images-changed");
       emit("collections-changed");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't restore the photo");
+      setError(err instanceof Error ? err.message : "Couldn't restore the item");
     } finally {
       setBusyId(null);
     }
@@ -58,7 +59,7 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
       </nav>
 
       <p className="max-w-prose text-sm text-stone-400">
-        Deleted photos wait here for {RECOVERY_DAYS} days before they are removed for good.
+        Deleted photos and videos wait here for {RECOVERY_DAYS} days before they are removed for good.
         Anyone can restore them, collections included.
       </p>
 
@@ -72,7 +73,7 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
         <EmptyState
           icon={<IconTrash />}
           title="Nothing here"
-          message="Photos you delete will wait here for 30 days before disappearing for good."
+          message="Photos and videos you delete will wait here for 30 days before disappearing for good."
         />
       )}
 
@@ -80,13 +81,17 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
         {items?.map((image) => (
           <li key={image.id} className="flex flex-col gap-1.5">
             <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-stone-900">
-              <img
-                src={api.mediaUrl(image.mediaKey, "thumb")}
-                alt={image.caption ?? image.originalName}
-                loading="lazy"
-                decoding="async"
-                className="h-full w-full object-cover opacity-60"
-              />
+              {image.contentType.startsWith("video/") ? (
+                <VideoPlaceholder className="opacity-60" />
+              ) : (
+                <img
+                  src={api.mediaUrl(image.mediaKey, "thumb")}
+                  alt={image.caption ?? image.originalName}
+                  loading="lazy"
+                  decoding="async"
+                  className="h-full w-full object-cover opacity-60"
+                />
+              )}
               {image.deletedAt && (
                 <span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] tabular-nums text-stone-300">
                   {daysLeft(image.deletedAt)} days left

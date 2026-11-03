@@ -8,7 +8,7 @@
 
 ## 1. Mission
 
-Build **Shared Gallery**, a 100% serverless image gallery web app running entirely on Cloudflare. Users upload images, browse them in a gallery, create collections that behave like virtual folders, and tag any image into one or more collections. The interface treats mobile as a first class citizen and works equally well on desktop.
+Build **Shared Gallery**, a 100% serverless photo and video gallery web app running entirely on Cloudflare. Users upload photos and videos, browse them in a gallery, create collections that behave like virtual folders, and tag any item into one or more collections. The interface treats mobile as a first class citizen and works equally well on desktop.
 
 The whole app (frontend and API) ships as a **single Cloudflare Worker with Static Assets**. There is no separate origin server, no container, and no VM.
 
@@ -63,7 +63,7 @@ Proceed with the default. Each is a single switch that can be revisited later wi
 
 - **D1. Authentication.** A **single shared password** gates the whole gallery, with a long lived JWT session so members are not re-prompted. No user accounts, no emails. The password is stored only as a PBKDF2 hash in a Wrangler secret; the session is an HS256 JWT delivered in an httpOnly cookie. Full model in section 8. Everything requires a valid session by default. Read endpoints and mutation endpoints are kept separate so that open public viewing could be enabled later (ungate reads only) without touching writes, but do not build a public mode now.
 - **D2. Identity model.** Default: **single shared space** with **self-declared display names** for attribution. Everyone who knows the password shares one pool of images and collections. There are no accounts and no access partitioning: the display name is a soft label recording who uploaded or tagged something, not a security boundary (anyone with the password could type any name, which is acceptable for a small trusted group). Full flow in section 6.
-- **D3. Upload transport.** Client streams the upload to the Worker, which writes to R2. The Free plan caps request body at **100 MB**, so enforce a max image size of **50 MB** by default (well within the cap and generous for camera images and RAW-derived JPEGs). Larger originals are out of scope for now; the upgrade path is R2 multipart or presigned direct-to-R2 upload.
+- **D3. Upload transport.** Client streams the upload to the Worker, which writes to R2. Enforce a max upload size of **100 MB**. Support JPEG, PNG, GIF, WebP, and AVIF images, plus MP4, WebM, and QuickTime videos. Videos are streamed from R2 with byte-range support for browser playback and seeking; they are not transformed or transcoded. Larger originals are out of scope for now; the upgrade path is R2 multipart or presigned direct-to-R2 upload.
 - **D4. Variant strategy.** Store **originals only** in R2. Generate variants on demand through the Images binding. Default to **two presets** to conserve the Free transformation budget: `thumb` (width 480, for grid tiles) and `full` (width 1600, for the lightbox), both `fit=scale-down`, `format=auto`. A third mid preset is optional if grid tiles look soft, at the cost of one more transformation per image. Never store resized copies and never resize inside the Worker.
 
 ## 5. Data model
@@ -170,14 +170,15 @@ All endpoints live under `/api`. JSON in, JSON out, except image bytes. Return p
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/images` | Upload one image (streamed body). Writes original to R2, extracts dimensions, inserts row. Returns the image record. Enforces the 50 MB limit and image-only content types |
-| GET | `/api/images?filter=all\|untagged&cursor=&limit=` | List images. `filter=all` returns everything, `filter=untagged` returns only images with no collection membership |
+| POST | `/api/images` | Upload one image or video (streamed body). Writes original to R2, extracts dimensions for images, inserts row. Returns the media record. Enforces the 100 MB limit and supported media content types |
+| GET | `/api/images?filter=all\|untagged&cursor=&limit=&sort=` | List media. `filter=all` returns everything, `filter=untagged` returns only items with no collection membership. `sort` accepts `newest`, `oldest`, `capture-newest`, `capture-oldest`, `filename-asc`, `filename-desc`, `size-desc`, `size-asc`, `uploader-asc`, or `uploader-desc` |
 | GET | `/api/images/:id` | Single image with its collection memberships |
 | PATCH | `/api/images/:id` | Update caption |
-| DELETE | `/api/images/:id` | Delete image (remove R2 object, cascade junction rows) |
+| DELETE | `/api/images/:id` | Soft-delete one item into Recently deleted for 30-day recovery |
+| POST | `/api/images/bulk-delete` | Soft-delete up to 200 selected items. Body `{ "imageIds": string[] }`; items remain recoverable for 30 days |
 | GET | `/api/collections` | List collections with cover and member count |
 | POST | `/api/collections` | Create collection (name required, slug auto generated and de-duplicated) |
-| GET | `/api/collections/:id?cursor=&limit=` | Collection detail plus its images |
+| GET | `/api/collections/:id?cursor=&limit=&sort=` | Collection detail plus its images, with the same metadata sort options |
 | PATCH | `/api/collections/:id` | Rename, edit description, set `cover_image_id`, reorder |
 | DELETE | `/api/collections/:id` | Delete collection. Images survive; only membership rows are removed |
 | POST | `/api/collections/:id/images` | Add images to collection. Body `{ "imageIds": string[] }`. Idempotent |
@@ -356,7 +357,7 @@ Deliver: `scripts/hash-password.mjs`; `POST /api/auth/login`, `POST /api/auth/lo
 Acceptance: with `JWT_SECRET` and `GALLERY_PASSWORD_HASH` set, the correct password logs in and sets the cookie; a wrong password returns 401; more than 10 rapid failures from one IP return 429; a gated endpoint returns 401 without the cookie and 200 with it; reloading the page does not re-prompt; logout clears the cookie and returns the user to the login screen; after login with no stored name the display-name prompt appears once, and the chosen name persists across reloads and is sent on subsequent requests.
 
 ### Phase 3: Upload and image serving
-Deliver: `POST /api/images` (stream to R2, extract width and height, insert row, generated key, 50 MB and image-only enforcement, record `uploaded_by` from the sanitized `X-Gallery-User` header); `GET /media/:key` (stream original); and `GET /media/:key?v=thumb|full` transforming via the `IMAGES` binding with `format=auto` and caching results in the Cache API. All gated.
+Deliver: `POST /api/images` (stream to R2, extract width and height for images, insert row, generated key, 100 MB and supported media type enforcement, record `uploaded_by` from the sanitized `X-Gallery-User` header); `GET /media/:key` (stream original); and `GET /media/:key?v=thumb|full` transforming images via the `IMAGES` binding with `format=auto` and caching results in the Cache API. All gated.
 Acceptance: while logged in, uploading a JPEG and a PNG returns a record carrying the uploader's display name; the original renders at `/media/:key`; each variant returns a correctly sized, format optimized image; a second request for the same variant is served from cache without a new transformation; non image or oversized uploads are rejected; the same routes return 401 when logged out.
 
 ### Phase 4: Gallery views (All Images)
@@ -408,4 +409,4 @@ Acceptance: oversized or non image uploads are rejected; deleting an image remov
 
 ## 15. Explicit non goals
 
-Do not build these unless asked in a later brief: authenticated user accounts, per user access control, or per user ownership of content (the app uses one shared password; the display name is soft attribution only, not an account and not an access boundary); per person login revocation or audit logs; sharing links with granular per collection permissions; image editing or filters; AI auto tagging; comments or social features; EXIF driven map or timeline views; video support; or bulk import from third party services. Nested collections (folders inside folders) are out of scope; collections are a single flat level.
+Do not build these unless asked in a later brief: authenticated user accounts, per user access control, or per user ownership of content (the app uses one shared password; the display name is soft attribution only, not an account and not an access boundary); per person login revocation or audit logs; sharing links with granular per collection permissions; image editing or filters; AI auto tagging; comments or social features; EXIF driven map or timeline views; video transcoding or generated video thumbnails; or bulk import from third party services. Nested collections (folders inside folders) are out of scope; collections are a single flat level.

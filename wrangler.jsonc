@@ -1,27 +1,44 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "shared-gallery",
-  "main": "src/worker/index.ts",
-  "compatibility_date": "2026-07-08",
-  // assets.directory is intentionally omitted: @cloudflare/vite-plugin infers it
-  // from the client build output.
-  "assets": {
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/media/*"]
-  },
-  "r2_buckets": [
-    { "binding": "BUCKET", "bucket_name": "shared-gallery-media" }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "shared-gallery-db",
-      "database_id": "4fbfc48e-ae23-4630-9a48-9d6ffda5946a",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "images": { "binding": "IMAGES" },
-  "vars": { "SESSION_TTL_DAYS": "30" },
-  "observability": { "enabled": true }
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "shared-gallery",
+	"main": "src/worker/index.ts",
+	"compatibility_date": "2026-07-08",
+	// assets.directory is intentionally omitted: @cloudflare/vite-plugin infers it
+	// from the client build output.
+	"routes": [{
+      "pattern": "photos.justcompile.io",
+      "custom_domain": true
+    }],
+	"assets": {
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*",
+			"/media/*"
+		]
+	},
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "photo-gallery-media"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "photo-gallery-db",
+			"database_id": "762983d1-f011-461b-882d-906eb80e433d",
+			"remote": true,
+			"migrations_dir": "../../migrations"
+		}
+	],
+	"images": {
+		"binding": "IMAGES"
+	},
+	"vars": {
+		"SESSION_TTL_DAYS": "30"
+	},
+	"observability": {
+		"enabled": true
+	}
 }

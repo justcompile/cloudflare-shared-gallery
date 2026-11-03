@@ -1,10 +1,11 @@
 import type { ApiCollection } from "../../shared/types";
 import { mediaUrl } from "../lib/api";
 import { IconStack } from "./icons";
+import VideoPlaceholder from "./VideoPlaceholder";
 
 /**
  * Collection folder tile, drawn as a small pile of prints: two offset,
- * slightly rotated "prints" peek out from behind the cover photo.
+ * slightly rotated "prints" peek out from behind the cover image.
  */
 export default function CollectionTile({
   collection,
@@ -18,7 +19,7 @@ export default function CollectionTile({
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`Open collection ${collection.name}, ${collection.memberCount} photos`}
+      aria-label={`Open collection ${collection.name}, ${collection.memberCount} items`}
       className="group flex w-full flex-col gap-2 rounded-xl p-2 text-left outline-none hover:bg-stone-900/60 focus-visible:ring-2 focus-visible:ring-amber-400"
     >
       <div className="relative aspect-square w-full">
@@ -31,7 +32,9 @@ export default function CollectionTile({
           className="absolute inset-1 rotate-2 rounded-lg bg-stone-700/80 transition-transform duration-300 group-hover:rotate-4 motion-reduce:transition-none"
         />
         <div className="absolute inset-0 overflow-hidden rounded-lg bg-stone-800 shadow-md">
-          {cover ? (
+          {cover?.contentType.startsWith("video/") ? (
+            <VideoPlaceholder />
+          ) : cover ? (
             <img
               src={mediaUrl(cover.mediaKey, "thumb")}
               alt=""
@@ -52,7 +55,7 @@ export default function CollectionTile({
       <div className="px-1">
         <div className="truncate text-sm font-medium text-stone-200">{collection.name}</div>
         <div className="truncate text-xs text-stone-500">
-          {collection.memberCount === 1 ? "1 photo" : `${collection.memberCount} photos`}
+          {collection.memberCount === 1 ? "1 item" : `${collection.memberCount} items`}
         </div>
       </div>
     </button>

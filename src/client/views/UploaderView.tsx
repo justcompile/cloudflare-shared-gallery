@@ -3,7 +3,7 @@ import PhotoSection from "../components/PhotoSection";
 import EmptyState from "../components/EmptyState";
 import { IconImage } from "../components/icons";
 
-/** Every photo uploaded by one person. */
+/** Every item uploaded by one person. */
 export default function UploaderView({ who, onBack }: { who: string; onBack: () => void }) {
   const feed = useImageFeed({ kind: "uploader", who });
 
@@ -11,7 +11,7 @@ export default function UploaderView({ who, onBack }: { who: string; onBack: () 
     <div className="flex flex-col gap-3">
       <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm text-stone-400">
         <button onClick={onBack} className="min-h-11 rounded-lg px-2 hover:text-stone-200">
-          ‹ Photos
+          ‹ Media
         </button>
         <span aria-hidden>/</span>
         <span className="truncate px-1 text-stone-200">Uploaded by {who}</span>
@@ -24,7 +24,7 @@ export default function UploaderView({ who, onBack }: { who: string; onBack: () 
             {feed.ready && (
               <span className="ml-2 normal-case tracking-normal text-stone-600">
                 {feed.images.length}
-                {feed.hasMore ? "+" : ""} photos
+                {feed.hasMore ? "+" : ""} items
               </span>
             )}
           </h2>
@@ -33,7 +33,7 @@ export default function UploaderView({ who, onBack }: { who: string; onBack: () 
           <EmptyState
             icon={<IconImage />}
             title={`Nothing from ${who} yet`}
-            message="Photos they upload will show up here."
+            message="Photos and videos they upload will show up here."
           />
         }
       />

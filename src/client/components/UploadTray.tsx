@@ -57,7 +57,7 @@ export default function UploadTray() {
               </>
             ) : (
               <span className="text-emerald-400">
-                {done === 1 ? "Photo uploaded" : `${done} photos uploaded`}
+                {done === 1 ? "File uploaded" : `${done} files uploaded`}
               </span>
             )}
           </span>

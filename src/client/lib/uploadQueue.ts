@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react";
-import { ApiError, uploadImage } from "./api";
+import { ApiError, uploadMedia } from "./api";
 import { emit } from "./events";
 
 /**
  * App-wide upload queue. Both the upload buttons and the page-wide drop zone
- * feed files in here, so dropping hundreds of images at once is safe:
+ * feed files in here, so dropping hundreds of media files at once is safe:
  * uploads run at most CONCURRENCY at a time, progress re-renders are
  * throttled, and gallery refresh events are debounced instead of firing once
  * per completed file.
@@ -45,7 +45,7 @@ export interface UploadBatch {
 
 const CONCURRENCY = 3;
 const MAX_ATTEMPTS = 4; // 1 initial try + 3 automatic retries
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 let items: InternalItem[] = [];
 let active = 0;
@@ -129,7 +129,7 @@ function pump(): void {
     if (!next) break;
     next.status = "uploading";
     active++;
-    uploadImage(next.file, (fraction) => {
+    uploadMedia(next.file, (fraction) => {
       next.progress = fraction;
       notifyProgressThrottled();
     })
@@ -179,7 +179,7 @@ function pump(): void {
   notify();
 }
 
-/** Adds image files to the queue as one batch and starts uploading. */
+/** Adds media files to the queue as one batch and starts uploading. */
 export function enqueueUploads(files: File[]): UploadBatch {
   const batchId = crypto.randomUUID();
   let resolve!: (ids: string[]) => void;
@@ -202,7 +202,7 @@ export function enqueueUploads(files: File[]): UploadBatch {
     };
     if (file.size > MAX_UPLOAD_BYTES) {
       item.status = "error";
-      item.error = "Larger than the 50 MB limit";
+      item.error = "Larger than the 100 MB limit";
       items.push(item);
       markSettled(item);
       continue;

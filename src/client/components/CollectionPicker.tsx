@@ -128,11 +128,11 @@ export default function CollectionPicker({
         <div className="border-b border-stone-800 px-5 py-4">
           <h2 id="picker-title" className="text-lg font-semibold text-stone-100">
             {single
-              ? "Collections for this photo"
-              : `Add ${imageIds.length} photos to collections`}
+              ? "Collections for this item"
+              : `Add ${imageIds.length} items to collections`}
           </h2>
           <p className="mt-0.5 text-xs text-stone-500">
-            Photos can live in any number of collections.
+            Photos and videos can live in any number of collections.
           </p>
         </div>
 

@@ -1,5 +1,10 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { ApiImageDetail } from "../../shared/types";
+import {
+  IMAGE_SORTS,
+  isImageSort,
+  type ApiImageDetail,
+  type ImageSort,
+} from "../../shared/types";
 import type { ImageFeed } from "../lib/useImageFeed";
 import * as api from "../lib/api";
 import ImageGrid from "./ImageGrid";
@@ -7,7 +12,21 @@ import Lightbox from "./Lightbox";
 import CollectionPicker from "./CollectionPicker";
 import SelectionBar from "./SelectionBar";
 import EmptyState from "./EmptyState";
-import { IconAlert } from "./icons";
+import { IconAlert, IconTrash } from "./icons";
+import { emit } from "../lib/events";
+
+const SORT_LABELS: Record<ImageSort, string> = {
+  newest: "Recently added",
+  oldest: "Oldest added",
+  "capture-newest": "Capture date, newest",
+  "capture-oldest": "Capture date, oldest",
+  "filename-asc": "Filename, A to Z",
+  "filename-desc": "Filename, Z to A",
+  "size-desc": "Largest file",
+  "size-asc": "Smallest file",
+  "uploader-asc": "Uploader, A to Z",
+  "uploader-desc": "Uploader, Z to A",
+};
 
 export interface SelectionContext {
   selectedIds: Set<string>;
@@ -36,6 +55,9 @@ export default function PhotoSection({
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
+  const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ imageIds: string[]; current?: Set<string> } | null>(
     null,
   );
@@ -107,6 +129,40 @@ export default function PhotoSection({
     }
   }
 
+  async function deleteSelected() {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const ids = [...selectedIds];
+      for (let i = 0; i < ids.length; i += 200) {
+        const batch = ids.slice(i, i + 200);
+        await api.deleteImages(batch);
+        for (const id of batch) feed.removeImage(id);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of batch) next.delete(id);
+          return next;
+        });
+      }
+      emit("images-changed");
+      emit("collections-changed");
+      setConfirmingBulkDelete(false);
+      clearSelection();
+    } catch (err) {
+      emit("images-changed");
+      emit("collections-changed");
+      lastToggled.current = null;
+      setDeleteError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't move the selected items to Recently deleted",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function openPickerForDetail(detail: ApiImageDetail) {
     setPicker({
       imageIds: [detail.id],
@@ -141,17 +197,38 @@ export default function PhotoSection({
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">{header}</div>
         {feed.images.length > 0 && (
-          <button
-            onClick={() => (selecting ? clearSelection() : setSelecting(true))}
-            aria-pressed={selecting}
-            className={`min-h-11 shrink-0 rounded-lg px-3 text-sm ${
-              selecting
-                ? "bg-stone-800 text-amber-400"
-                : "text-stone-400 hover:bg-stone-900 hover:text-stone-200"
-            }`}
-          >
-            {selecting ? "Done" : "Select"}
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <label className="sr-only" htmlFor="media-sort">
+              Sort media
+            </label>
+            <select
+              id="media-sort"
+              value={feed.sort}
+              onChange={(e) => {
+                if (!isImageSort(e.currentTarget.value)) return;
+                feed.setSort(e.currentTarget.value);
+                clearSelection();
+              }}
+              className="min-h-11 max-w-[9.5rem] rounded-lg border border-stone-800 bg-stone-900 px-2 text-xs text-stone-300 outline-none focus:border-amber-400 sm:max-w-none sm:px-3 sm:text-sm"
+            >
+              {IMAGE_SORTS.map((sort) => (
+                <option key={sort} value={sort}>
+                  {SORT_LABELS[sort]}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => (selecting ? clearSelection() : setSelecting(true))}
+              aria-pressed={selecting}
+              className={`min-h-11 shrink-0 rounded-lg px-3 text-sm ${
+                selecting
+                  ? "bg-stone-800 text-amber-400"
+                  : "text-stone-400 hover:bg-stone-900 hover:text-stone-200"
+              }`}
+            >
+              {selecting ? "Done" : "Select"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -180,8 +257,61 @@ export default function PhotoSection({
           >
             {downloading ? "Downloading…" : "Download"}
           </button>
+          <button
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmingBulkDelete(true);
+            }}
+            disabled={deleting}
+            className="flex min-h-11 items-center gap-1.5 rounded-lg bg-stone-800 px-3 text-sm text-rose-300 hover:bg-stone-700 disabled:opacity-50"
+          >
+            <IconTrash width="0.9em" height="0.9em" />
+            Delete
+          </button>
           {extraSelectionActions?.({ selectedIds, clear: clearSelection })}
         </SelectionBar>
+      )}
+
+      {confirmingBulkDelete && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-delete-title"
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-stone-800 bg-stone-900 p-5 shadow-2xl">
+            <h2 id="bulk-delete-title" className="text-lg font-semibold text-stone-100">
+              Move {selectedIds.size} {selectedIds.size === 1 ? "item" : "items"} to Recently deleted?
+            </h2>
+            <p className="mt-2 text-sm text-stone-400">
+              You can restore them for 30 days. They will not be permanently deleted now.
+            </p>
+            {deleteError && (
+              <p role="alert" className="mt-3 text-sm text-rose-400">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setConfirmingBulkDelete(false);
+                  setDeleteError(null);
+                }}
+                disabled={deleting}
+                className="min-h-11 rounded-lg px-3 text-sm text-stone-300 hover:bg-stone-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void deleteSelected()}
+                disabled={deleting || selectedIds.size === 0}
+                className="min-h-11 rounded-lg bg-rose-600 px-4 text-sm font-medium text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {deleting ? "Moving…" : "Move to Recently deleted"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {lightbox !== null && feed.images[lightbox] && (

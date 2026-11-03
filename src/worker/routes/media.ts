@@ -2,7 +2,7 @@ import type { Ctx, Router } from "../router";
 import { error } from "../lib/json";
 
 /**
- * Gated image byte serving.
+ * Gated media byte serving.
  *
  *   GET /media/:key           — stream the original from R2 (full-res download)
  *   GET /media/:key?v=thumb   — 480w variant  (grid tiles)
@@ -40,15 +40,62 @@ async function serve(ctx: Ctx): Promise<Response> {
 }
 
 async function serveOriginal(ctx: Ctx, key: string): Promise<Response> {
-  const obj = await ctx.env.BUCKET.get(key);
+  const rangeHeader = ctx.req.headers.get("Range");
+  if (!rangeHeader) {
+    const obj = await ctx.env.BUCKET.get(key);
+    if (!obj) return error("Not found", 404);
+    const headers = originalHeaders(obj);
+    return new Response(obj.body, { headers });
+  }
+
+  const head = await ctx.env.BUCKET.head(key);
+  if (!head) return error("Not found", 404);
+  const range = parseRange(rangeHeader, head.size);
+  if (!range) {
+    return new Response(null, {
+      status: 416,
+      headers: { "Content-Range": `bytes */${head.size}`, "Accept-Ranges": "bytes" },
+    });
+  }
+  const obj = await ctx.env.BUCKET.get(key, { range });
   if (!obj) return error("Not found", 404);
+  const end = range.offset + range.length - 1;
+  const headers = originalHeaders(obj);
+  headers.set("Content-Range", `bytes ${range.offset}-${end}/${head.size}`);
+  headers.set("Content-Length", String(range.length));
+  return new Response(obj.body, { status: 206, headers });
+}
+
+function originalHeaders(obj: R2ObjectBody): Headers {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
   headers.set("etag", obj.httpEtag);
-  // Originals are immutable (keys are unique per upload) but session-gated,
-  // so only the browser's private cache may store them.
+  headers.set("Accept-Ranges", "bytes");
   headers.set("Cache-Control", "private, max-age=31536000, immutable");
-  return new Response(obj.body, { headers });
+  return headers;
+}
+
+function parseRange(
+  value: string,
+  size: number,
+): { offset: number; length: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match) return null;
+  const start = match[1] ? Number(match[1]) : null;
+  const requestedEnd = match[2] ? Number(match[2]) : null;
+  if (start === null && requestedEnd === null) return null;
+  if (start === null) {
+    if (requestedEnd === null || requestedEnd <= 0) return null;
+    const length = Math.min(requestedEnd, size);
+    return { offset: size - length, length };
+  }
+  if (start >= size) return null;
+  if (requestedEnd !== null && requestedEnd < start) return null;
+  const end = requestedEnd === null ? size - 1 : Math.min(requestedEnd, size - 1);
+  return {
+    offset: start,
+    length: end - start + 1,
+  };
 }
 
 /**
@@ -86,6 +133,9 @@ async function serveVariant(ctx: Ctx, key: string, variant: VariantName): Promis
 
   const obj = await ctx.env.BUCKET.get(key);
   if (!obj) return error("Not found", 404);
+  if (obj.httpMetadata?.contentType?.startsWith("video/")) {
+    return error("Video files do not have image variants", 415);
+  }
 
   const preset = VARIANTS[variant];
   try {

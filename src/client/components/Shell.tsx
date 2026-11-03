@@ -42,22 +42,24 @@ export default function Shell({
     void checkVisitUpdates().then((u) => setNewCount(u.newCount));
   }, []);
 
-  const startUpload = useCallback((images: File[]) => {
-    const batch = enqueueUploads(images);
+  const startUpload = useCallback((media: File[]) => {
+    const batch = enqueueUploads(media);
     // Multi-file uploads offer batch filing into a collection.
-    if (images.length >= 2) setTagPrompt(batch);
+    if (media.length >= 2) setTagPrompt(batch);
   }, []);
 
   const handleFiles = useCallback(
     (files: File[]) => {
-      const images = files.filter((f) => f.type.startsWith("image/"));
-      if (images.length === 0) return;
+      const media = files.filter(
+        (f) => f.type.startsWith("image/") || f.type.startsWith("video/"),
+      );
+      if (media.length === 0) return;
       // Attribution must be set before the first upload (PRD section 6).
       if (!getStoredDisplayName()) {
-        setPendingFiles(images);
+        setPendingFiles(media);
         return;
       }
-      startUpload(images);
+      startUpload(media);
     },
     [startUpload],
   );
@@ -98,11 +100,11 @@ export default function Shell({
           >
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden />
             {newCount === 1
-              ? "1 new photo since your last visit"
-              : `${newCount} new photos since your last visit`}
+              ? "1 new item since your last visit"
+              : `${newCount} new items since your last visit`}
             <button
               onClick={() => setNewCount(0)}
-              aria-label="Dismiss new photos notice"
+              aria-label="Dismiss new items notice"
               className="ml-1 rounded p-1 text-amber-400/70 hover:text-amber-300"
             >
               <IconX width="0.8em" height="0.8em" />
@@ -147,7 +149,7 @@ export default function Shell({
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-400 text-xl font-bold text-stone-950 shadow-lg hover:bg-amber-300"
           >
             <IconPlus />
-            <span className="sr-only">Upload photos</span>
+            <span className="sr-only">Upload photos or videos</span>
           </UploadButton>
         </div>
       </div>

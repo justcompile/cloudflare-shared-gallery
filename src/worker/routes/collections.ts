@@ -13,7 +13,7 @@ import {
   removeImageFromCollection,
   updateCollection,
 } from "../db/queries";
-import type { ApiCollectionDetail } from "../../shared/types";
+import { isImageSort, type ApiCollectionDetail } from "../../shared/types";
 
 export function registerCollectionRoutes(router: Router): void {
   router.get("/api/collections", list);
@@ -77,9 +77,14 @@ async function create(ctx: Ctx): Promise<Response> {
 async function detail(ctx: Ctx): Promise<Response> {
   const collection = await getCollection(ctx.env.DB, ctx.params.id);
   if (!collection) return error("Collection not found", 404);
+  const sortRaw = ctx.url.searchParams.get("sort") ?? "newest";
+  if (!isImageSort(sortRaw)) {
+    return error("sort is not supported", 400);
+  }
   const page = await listCollectionImages(ctx.env.DB, collection.id, {
     cursor: ctx.url.searchParams.get("cursor"),
     limit: clampLimit(ctx.url.searchParams.get("limit")),
+    sort: sortRaw,
   });
   const body: ApiCollectionDetail = { ...collection, images: page.items, cursor: page.cursor };
   return json(body);

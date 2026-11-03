@@ -1,7 +1,7 @@
 # Shared Gallery
 
-A private, self-hosted photo gallery for a small group, running entirely on the
-**Cloudflare free plan**. One shared password, no accounts. Upload by drag and drop
+A private, self-hosted photo and video gallery for a small group, running entirely
+on the **Cloudflare free plan**. One shared password, no accounts. Upload by drag and drop
 (hundreds at a time), organise into collections, browse from any device. Installs as
 a PWA on phones.
 
@@ -10,7 +10,8 @@ Cloudflare Images produces thumbnails on demand.
 
 ## Features
 
-- Drag-and-drop bulk upload (files or folders) with automatic retry and camera capture on mobile
+- Drag-and-drop bulk upload of photos and MP4, WebM, or QuickTime videos (files or
+  folders), with automatic retry and camera capture on mobile
 - Collections as virtual folders; a photo can live in many at once
 - Lightbox with swipe/keyboard navigation, captions, and a details pane (EXIF capture date, camera, resolution — press `i`)
 - Multi-select (shift-click for ranges) to download or file photos
@@ -55,7 +56,8 @@ npm run dev
 The design keeps everything inside Cloudflare's free tiers: 10 GB of photo storage,
 100k requests/day, and 5,000 image transformations per 30 days (roughly 2,500 photos;
 thumbnails are aggressively cached so repeats are free). The in-app footer shows live
-usage. If you outgrow a limit, the paid tiers are drop-in. Details and design
+usage. Uploads are limited to 100 MB per file. Videos play directly from R2 and
+support seeking; they are not resized or transcoded. Details and design
 constraints are in [docs/PRD.md](docs/PRD.md) and [AGENTS.md](AGENTS.md).
 
 Deletes are soft: photos sit in "Recently deleted" (Settings menu) for 30 days, where

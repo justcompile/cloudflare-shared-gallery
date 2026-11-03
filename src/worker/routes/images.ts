@@ -1,12 +1,12 @@
 import type { Ctx, Router } from "../router";
 import { error, json, noContent, readJson } from "../lib/json";
 import {
-  ALLOWED_IMAGE_TYPES,
+  ALLOWED_MEDIA_TYPES,
   MAX_UPLOAD_BYTES,
   generateR2Key,
   sanitizeOriginalName,
 } from "../lib/r2";
-import { extractDimensions, sniffImageType } from "../lib/imageMeta";
+import { extractDimensions, sniffMediaType } from "../lib/imageMeta";
 import { EXIF_SCAN_BYTES, parseExif } from "../lib/exif";
 import {
   clampLimit,
@@ -18,13 +18,15 @@ import {
   purgeExpiredDeletions,
   restoreImage,
   softDeleteImage,
+  softDeleteImages,
   updateImageCaption,
 } from "../db/queries";
-import type { ApiImageDetail, ImageFilter } from "../../shared/types";
+import { isImageSort, type ApiImageDetail, type ImageFilter } from "../../shared/types";
 
 export function registerImageRoutes(router: Router): void {
   router.post("/api/images", upload);
   router.get("/api/images", list);
+  router.post("/api/images/bulk-delete", bulkRemove);
   // Registered before :id so the literal path wins the match.
   router.get("/api/images/deleted", deletedList);
   router.get("/api/images/:id", detail);
@@ -34,7 +36,7 @@ export function registerImageRoutes(router: Router): void {
 }
 
 /**
- * POST /api/images — one image per request, raw streamed body.
+ * POST /api/images — one media file per request, raw streamed body.
  * The body streams straight into R2 (never buffered into Worker memory);
  * magic bytes are then range-read back for content verification, and
  * dimensions come from the free Images `.info()` call.
@@ -49,8 +51,8 @@ async function upload(ctx: Ctx): Promise<Response> {
     .split(";")[0]
     .trim()
     .toLowerCase();
-  if (!ALLOWED_IMAGE_TYPES[contentType]) {
-    return error("Only JPEG, PNG, GIF, WebP, or AVIF images can be uploaded", 415);
+  if (!ALLOWED_MEDIA_TYPES[contentType]) {
+    return error("Only JPEG, PNG, GIF, WebP, AVIF, MP4, WebM, or QuickTime files can be uploaded", 415);
   }
 
   const declaredSize = Number.parseInt(ctx.req.headers.get("Content-Length") ?? "", 10);
@@ -58,7 +60,7 @@ async function upload(ctx: Ctx): Promise<Response> {
     return error("Missing upload size", 411);
   }
   if (declaredSize > MAX_UPLOAD_BYTES) {
-    return error("Image exceeds the 50 MB upload limit", 413);
+    return error("File exceeds the 100 MB upload limit", 413);
   }
   if (!ctx.req.body) return error("Empty upload body", 400);
 
@@ -66,7 +68,7 @@ async function upload(ctx: Ctx): Promise<Response> {
   const key = generateR2Key(id, contentType);
   const originalName = sanitizeOriginalName(
     ctx.req.headers.get("X-Original-Name"),
-    `image.${ALLOWED_IMAGE_TYPES[contentType]}`,
+    `upload.${ALLOWED_MEDIA_TYPES[contentType]}`,
   );
 
   const stored = await ctx.env.BUCKET.put(key, ctx.req.body, {
@@ -76,16 +78,17 @@ async function upload(ctx: Ctx): Promise<Response> {
     return error("Upload failed, please retry", 500);
   }
 
-  // Verify the payload really is the declared image type via magic bytes.
+  // Verify the payload really is the declared media type via magic bytes.
   const head = await ctx.env.BUCKET.get(key, { range: { offset: 0, length: 32 } });
   const headBytes = head ? new Uint8Array(await head.arrayBuffer()) : new Uint8Array(0);
-  const sniffed = sniffImageType(headBytes);
+  const sniffed = sniffMediaType(headBytes);
   if (sniffed !== contentType) {
     await ctx.env.BUCKET.delete(key);
-    return error("File content does not match a supported image format", 415);
+    return error("File content does not match its declared media type", 415);
   }
 
-  const dims = await extractDimensions(ctx.env, key);
+  const isImage = contentType.startsWith("image/");
+  const dims = isImage ? await extractDimensions(ctx.env, key) : null;
 
   // Index capture metadata from the EXIF header (the R2 original keeps the
   // full metadata regardless).
@@ -122,9 +125,14 @@ async function list(ctx: Ctx): Promise<Response> {
   if (filterRaw !== "all" && filterRaw !== "untagged") {
     return error("filter must be 'all' or 'untagged'", 400);
   }
+  const sortRaw = ctx.url.searchParams.get("sort") ?? "newest";
+  if (!isImageSort(sortRaw)) {
+    return error("sort is not supported", 400);
+  }
   const uploader = ctx.url.searchParams.get("uploader")?.trim().slice(0, 40) || null;
   const page = await listImages(ctx.env.DB, {
     filter: filterRaw as ImageFilter,
+    sort: sortRaw,
     cursor: ctx.url.searchParams.get("cursor"),
     limit: clampLimit(ctx.url.searchParams.get("limit")),
     uploader,
@@ -169,6 +177,28 @@ async function remove(ctx: Ctx): Promise<Response> {
   const marked = await softDeleteImage(ctx.env.DB, ctx.params.id, ctx.displayName, Date.now());
   if (!marked) return error("Image not found", 404);
   return noContent();
+}
+
+/** POST /api/images/bulk-delete — soft-delete up to 200 selected items. */
+async function bulkRemove(ctx: Ctx): Promise<Response> {
+  const body = await readJson<{ imageIds?: unknown }>(ctx.req);
+  const ids = body?.imageIds;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.some((id) => typeof id !== "string" || id.length === 0)
+  ) {
+    return error("imageIds must be a non-empty array of image ids", 400);
+  }
+  if (ids.length > 200) return error("At most 200 items per request", 400);
+
+  const deleted = await softDeleteImages(
+    ctx.env.DB,
+    [...new Set(ids as string[])],
+    ctx.displayName,
+    Date.now(),
+  );
+  return json({ deleted });
 }
 
 /** POST /api/images/:id/restore — bring a photo back from Recently deleted. */
