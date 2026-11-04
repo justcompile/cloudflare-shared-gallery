@@ -19,6 +19,9 @@ import {
   restoreImage,
   softDeleteImage,
   softDeleteImages,
+  updateVideoThumbnail,
+  updateImageMetadata,
+  updateImageCaptureDate,
   updateImageCaption,
 } from "../db/queries";
 import { isImageSort, type ApiImageDetail, type ImageFilter } from "../../shared/types";
@@ -27,6 +30,8 @@ export function registerImageRoutes(router: Router): void {
   router.post("/api/images", upload);
   router.get("/api/images", list);
   router.post("/api/images/bulk-delete", bulkRemove);
+  router.post("/api/images/:id/thumbnail", setVideoThumbnail);
+  router.post("/api/images/:id/reprocess-metadata", reprocessMetadata);
   // Registered before :id so the literal path wins the match.
   router.get("/api/images/deleted", deletedList);
   router.get("/api/images/:id", detail);
@@ -55,8 +60,9 @@ async function upload(ctx: Ctx): Promise<Response> {
     return error("Only JPEG, PNG, GIF, WebP, AVIF, MP4, WebM, or QuickTime files can be uploaded", 415);
   }
 
-  const declaredSize = Number.parseInt(ctx.req.headers.get("Content-Length") ?? "", 10);
-  if (!Number.isFinite(declaredSize) || declaredSize <= 0) {
+  const contentLength = ctx.req.headers.get("Content-Length");
+  const declaredSize = contentLength === null ? Number.NaN : Number(contentLength);
+  if (!Number.isSafeInteger(declaredSize) || declaredSize <= 0) {
     return error("Missing upload size", 411);
   }
   if (declaredSize > MAX_UPLOAD_BYTES) {
@@ -125,7 +131,7 @@ async function list(ctx: Ctx): Promise<Response> {
   if (filterRaw !== "all" && filterRaw !== "untagged") {
     return error("filter must be 'all' or 'untagged'", 400);
   }
-  const sortRaw = ctx.url.searchParams.get("sort") ?? "newest";
+  const sortRaw = ctx.url.searchParams.get("sort") ?? "capture-oldest";
   if (!isImageSort(sortRaw)) {
     return error("sort is not supported", 400);
   }
@@ -149,21 +155,197 @@ async function detail(ctx: Ctx): Promise<Response> {
   return json(body);
 }
 
+/** POST /api/images/:id/thumbnail — save a browser-generated JPEG video poster. */
+async function setVideoThumbnail(ctx: Ctx): Promise<Response> {
+  const image = await getImage(ctx.env.DB, ctx.params.id);
+  if (!image) return error("Media item not found", 404);
+  if (!image.contentType.startsWith("video/")) {
+    return error("Thumbnails can only be set for videos", 415);
+  }
+  if ((ctx.req.headers.get("Content-Type") ?? "").split(";")[0].trim().toLowerCase() !== "image/jpeg") {
+    return error("Thumbnail must be a JPEG image", 415);
+  }
+
+  const declaredSize = Number.parseInt(ctx.req.headers.get("Content-Length") ?? "", 10);
+  if (!Number.isFinite(declaredSize) || declaredSize <= 0) {
+    return error("Missing thumbnail size", 411);
+  }
+  const maxBytes = 5 * 1024 * 1024;
+  if (declaredSize > maxBytes) {
+    return error("Thumbnail exceeds the 5 MB limit", 413);
+  }
+  if (!ctx.req.body) return error("Empty thumbnail body", 400);
+
+  const thumbnailKey = generateR2Key(
+    `${image.id}-thumbnail-${crypto.randomUUID()}`,
+    "image/jpeg",
+  );
+  const stored = await ctx.env.BUCKET.put(thumbnailKey, ctx.req.body, {
+    httpMetadata: { contentType: "image/jpeg" },
+  });
+  if (!stored) return error("Thumbnail upload failed, please retry", 500);
+  if (stored.size > maxBytes) {
+    await ctx.env.BUCKET.delete(thumbnailKey);
+    return error("Thumbnail exceeds the 5 MB limit", 413);
+  }
+
+  const head = await ctx.env.BUCKET.get(thumbnailKey, { range: { offset: 0, length: 32 } });
+  const sniffed = head
+    ? sniffMediaType(new Uint8Array(await head.arrayBuffer()))
+    : null;
+  if (sniffed !== "image/jpeg") {
+    await ctx.env.BUCKET.delete(thumbnailKey);
+    return error("Thumbnail content is not a valid JPEG image", 415);
+  }
+
+  const updated = await updateVideoThumbnail(ctx.env.DB, image.id, thumbnailKey, Date.now());
+  if (!updated) {
+    await ctx.env.BUCKET.delete(thumbnailKey);
+    return error("Video not found", 404);
+  }
+  if (image.thumbnailKey) {
+    ctx.exec.waitUntil(
+      ctx.env.BUCKET.delete(image.thumbnailKey).catch((err: unknown) => {
+        console.error("Could not remove superseded video thumbnail", {
+          key: image.thumbnailKey,
+          err,
+        });
+      }),
+    );
+  }
+  const result = await getImage(ctx.env.DB, image.id);
+  if (!result) return error("Video not found", 404);
+  return json(result);
+}
+
+/** POST /api/images/:id/reprocess-metadata — refresh indexed media metadata. */
+async function reprocessMetadata(ctx: Ctx): Promise<Response> {
+  const image = await getImage(ctx.env.DB, ctx.params.id);
+  if (!image) return error("Media item not found", 404);
+  if (!(await ctx.env.BUCKET.head(image.mediaKey))) {
+    return error("Original media file not found", 404);
+  }
+
+  let metadata: {
+    width: number | null;
+    height: number | null;
+    takenAt: number | null;
+    camera: string | null;
+    durationMs: number | null;
+  };
+
+  if (image.contentType.startsWith("image/")) {
+    const dimensions = await extractDimensions(ctx.env, image.mediaKey);
+    let exif = { takenAt: null as number | null, camera: null as string | null };
+    if (image.contentType === "image/jpeg") {
+      const object = await ctx.env.BUCKET.get(image.mediaKey, {
+        range: { offset: 0, length: Math.min(EXIF_SCAN_BYTES, image.sizeBytes) },
+      });
+      if (!object) return error("Original media file not found", 404);
+      exif = parseExif(new Uint8Array(await object.arrayBuffer()));
+    }
+    metadata = {
+      width: dimensions?.width ?? image.width,
+      height: dimensions?.height ?? image.height,
+      takenAt: exif.takenAt ?? image.takenAt,
+      camera: exif.camera ?? image.camera,
+      durationMs: null,
+    };
+  } else if (image.contentType.startsWith("video/")) {
+    const body = await readJson<{
+      width?: unknown;
+      height?: unknown;
+      takenAt?: unknown;
+      camera?: unknown;
+      durationMs?: unknown;
+    }>(ctx.req);
+    const validDimension = (value: unknown): value is number | null =>
+      value === null || (typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+    const validTimestamp = (value: unknown): value is number | null =>
+      value === null ||
+      (typeof value === "number" &&
+        Number.isSafeInteger(value) &&
+        value > Date.UTC(1980, 0, 1) &&
+        value < Date.now() + 86_400_000);
+    const validDuration = (value: unknown): value is number | null =>
+      value === null || (typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+    if (
+      !body ||
+      !validDimension(body.width) ||
+      !validDimension(body.height) ||
+      !validTimestamp(body.takenAt) ||
+      (body.camera !== null &&
+        (typeof body.camera !== "string" || body.camera.trim().length === 0 || body.camera.length > 80)) ||
+      !validDuration(body.durationMs)
+    ) {
+      return error("Video metadata is invalid", 400);
+    }
+    metadata = {
+      width: body.width,
+      height: body.height,
+      takenAt: body.takenAt,
+      camera: typeof body.camera === "string" ? body.camera.trim() : null,
+      durationMs: body.durationMs,
+    };
+  } else {
+    return error("Metadata can only be processed for images and videos", 415);
+  }
+
+  const updated = await updateImageMetadata(ctx.env.DB, image.id, metadata, Date.now());
+  if (!updated) return error("Media item not found", 404);
+  const result = await getImage(ctx.env.DB, image.id);
+  if (!result) return error("Media item not found", 404);
+  return json(result);
+}
+
 /** PATCH /api/images/:id — update caption (doubles as alt text). */
 async function patch(ctx: Ctx): Promise<Response> {
-  const body = await readJson<{ caption?: unknown }>(ctx.req);
-  if (!body || !("caption" in body)) return error("caption is required", 400);
-  if (body.caption !== null && typeof body.caption !== "string") {
+  const body = await readJson<{ caption?: unknown; takenAt?: unknown }>(ctx.req);
+  if (!body || (!("caption" in body) && !("takenAt" in body))) {
+    return error("caption or takenAt is required", 400);
+  }
+  if ("caption" in body && body.caption !== null && typeof body.caption !== "string") {
     return error("caption must be a string or null", 400);
   }
-  const caption =
-    typeof body.caption === "string" ? body.caption.trim().slice(0, 500) : null;
-  const updated = await updateImageCaption(
-    ctx.env.DB,
-    ctx.params.id,
-    caption && caption.length > 0 ? caption : null,
-    Date.now(),
-  );
+  let takenAt: number | null = null;
+  const updatesCaptureDate = "takenAt" in body;
+  if (updatesCaptureDate) {
+    const value = body.takenAt;
+    if (value === null) {
+      takenAt = null;
+    } else if (
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value > Date.UTC(1980, 0, 1) &&
+      value < Date.now() + 86_400_000
+    ) {
+      takenAt = value;
+    } else {
+      return error("takenAt must be a valid capture timestamp or null", 400);
+    }
+  }
+  let updated = false;
+  const now = Date.now();
+  if ("caption" in body) {
+    const caption =
+      typeof body.caption === "string" ? body.caption.trim().slice(0, 500) : null;
+    updated =
+      (await updateImageCaption(
+        ctx.env.DB,
+        ctx.params.id,
+        caption && caption.length > 0 ? caption : null,
+        now,
+      )) || updated;
+  }
+  if (updatesCaptureDate) {
+    updated =
+      (await updateImageCaptureDate(
+        ctx.env.DB,
+        ctx.params.id,
+        takenAt,
+        now,
+      )) || updated;
+  }
   if (!updated) return error("Image not found", 404);
   return detail(ctx);
 }

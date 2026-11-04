@@ -2,6 +2,7 @@ import type { ApiCollection } from "../../shared/types";
 import { mediaUrl } from "../lib/api";
 import { IconStack } from "./icons";
 import VideoPlaceholder from "./VideoPlaceholder";
+import VideoBadge from "./VideoBadge";
 
 /**
  * Collection folder tile, drawn as a small pile of prints: two offset,
@@ -33,7 +34,17 @@ export default function CollectionTile({
         />
         <div className="absolute inset-0 overflow-hidden rounded-lg bg-stone-800 shadow-md">
           {cover?.contentType.startsWith("video/") ? (
-            <VideoPlaceholder />
+            cover.thumbnailKey ? (
+              <img
+                src={mediaUrl(cover.thumbnailKey)}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <VideoPlaceholder />
+            )
           ) : cover ? (
             <img
               src={mediaUrl(cover.mediaKey, "thumb")}
@@ -48,6 +59,7 @@ export default function CollectionTile({
             </div>
           )}
         </div>
+        {cover?.contentType.startsWith("video/") && cover.thumbnailKey && <VideoBadge />}
         <span className="absolute bottom-1.5 right-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-xs tabular-nums text-stone-200 backdrop-blur-sm">
           {collection.memberCount}
         </span>

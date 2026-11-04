@@ -5,6 +5,7 @@ import { emit } from "../lib/events";
 import EmptyState from "../components/EmptyState";
 import { IconTrash } from "../components/icons";
 import VideoPlaceholder from "../components/VideoPlaceholder";
+import VideoBadge from "../components/VideoBadge";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_DAYS = 30;
@@ -82,7 +83,17 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
           <li key={image.id} className="flex flex-col gap-1.5">
             <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-stone-900">
               {image.contentType.startsWith("video/") ? (
-                <VideoPlaceholder className="opacity-60" />
+                image.thumbnailKey ? (
+                  <img
+                    src={api.mediaUrl(image.thumbnailKey)}
+                    alt={image.caption ?? image.originalName}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full object-cover opacity-60"
+                  />
+                ) : (
+                  <VideoPlaceholder className="opacity-60" />
+                )
               ) : (
                 <img
                   src={api.mediaUrl(image.mediaKey, "thumb")}
@@ -91,6 +102,9 @@ export default function RecentlyDeleted({ onBack }: { onBack: () => void }) {
                   decoding="async"
                   className="h-full w-full object-cover opacity-60"
                 />
+              )}
+              {image.contentType.startsWith("video/") && image.thumbnailKey && (
+                <VideoBadge className="left-2 top-2" />
               )}
               {image.deletedAt && (
                 <span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] tabular-nums text-stone-300">

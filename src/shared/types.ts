@@ -7,11 +7,15 @@ export interface ApiImage {
   id: string;
   /** R2 object key; image bytes live at /media/{mediaKey}. */
   mediaKey: string;
+  /** R2 key for a browser-generated video poster, when one is set. */
+  thumbnailKey: string | null;
   originalName: string;
   contentType: string;
   sizeBytes: number;
   width: number | null;
   height: number | null;
+  /** Video duration in milliseconds, when available. */
+  durationMs: number | null;
   /** Doubles as alt text. */
   caption: string | null;
   uploadedBy: string | null;

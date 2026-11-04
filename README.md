@@ -14,6 +14,10 @@ Cloudflare Images produces thumbnails on demand.
   folders), with automatic retry and camera capture on mobile
 - Collections as virtual folders; a photo can live in many at once
 - Lightbox with swipe/keyboard navigation, captions, and a details pane (EXIF capture date, camera, resolution — press `i`)
+- Set or update a video's gallery thumbnail from its current frame in the lightbox
+- Reprocess metadata in the lightbox or in bulk: image dimensions and JPEG EXIF,
+  plus video dimensions, duration, and embedded capture details when available
+- Set or correct an item's capture date manually from the lightbox details pane
 - Multi-select (shift-click for ranges) to download or file photos
 - Everything attributed: see who uploaded or tagged each photo
 - Offline-capable installable PWA; originals stored byte-identical, metadata intact

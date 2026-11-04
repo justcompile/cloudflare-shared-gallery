@@ -64,3 +64,9 @@ ALTER TABLE images ADD COLUMN camera TEXT;
 ALTER TABLE images ADD COLUMN deleted_at INTEGER;
 ALTER TABLE images ADD COLUMN deleted_by TEXT;
 CREATE INDEX idx_images_deleted ON images(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- Migration 0004: browser-generated video poster thumbnails stored in R2.
+ALTER TABLE images ADD COLUMN thumbnail_key TEXT;
+
+-- Migration 0005: indexed video duration.
+ALTER TABLE images ADD COLUMN duration_ms INTEGER;

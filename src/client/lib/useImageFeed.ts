@@ -30,7 +30,7 @@ const PAGE_SIZE = 60;
 /** Cursor-paginated image feed for a view, auto-refreshing on app events. */
 export function useImageFeed(source: FeedSource): ImageFeed {
   const [images, setImages] = useState<ApiImage[]>([]);
-  const [sort, setSort] = useState<ImageSort>("newest");
+  const [sort, setSort] = useState<ImageSort>("capture-oldest");
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);

@@ -37,7 +37,7 @@
 			"database_name": "photo-gallery-db",
 			"database_id": "762983d1-f011-461b-882d-906eb80e433d",
 			"remote": true,
-			"migrations_dir": "../../migrations"
+			"migrations_dir": "./migrations"
 		}
 	],
 	"images": {

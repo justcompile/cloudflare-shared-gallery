@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ApiImage, ApiImageDetail } from "../../shared/types";
 import * as api from "../lib/api";
+import { reprocessMetadata } from "../lib/metadata";
 import { navigateTo } from "../lib/router";
 import {
   IconChevronLeft,
   IconChevronRight,
   IconDeviceCamera,
   IconDownload,
+  IconGear,
   IconInfo,
+  IconImage,
   IconStack,
   IconTrash,
   IconX,
@@ -42,15 +45,19 @@ export default function Lightbox({
   const image = images[index];
   const isVideo = image?.contentType.startsWith("video/") ?? false;
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const restoreFocusRef = useRef<Element | null>(null);
 
   const [detail, setDetail] = useState<ApiImageDetail | null>(null);
   const [editingCaption, setEditingCaption] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
+  const [editingCaptureDate, setEditingCaptureDate] = useState(false);
+  const [captureDateDraft, setCaptureDateDraft] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -67,8 +74,10 @@ export default function Lightbox({
     if (!image) return;
     setDetail(null);
     setEditingCaption(false);
+    setEditingCaptureDate(false);
     setConfirmingDelete(false);
     setActionError(null);
+    setVideoReady(false);
     let cancelled = false;
     api
       .getImage(image.id)
@@ -155,6 +164,103 @@ export default function Lightbox({
     }
   }
 
+  async function setVideoThumbnail() {
+    const video = videoRef.current;
+    if (!image || !video || !video.videoWidth || !video.videoHeight || busy) return;
+
+    setBusy(true);
+    setActionError(null);
+    try {
+      const maxDimension = 1280;
+      const scale = Math.min(
+        1,
+        maxDimension / Math.max(video.videoWidth, video.videoHeight),
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Your browser couldn't prepare the thumbnail");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const thumbnail = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("Your browser couldn't encode the thumbnail"));
+          },
+          "image/jpeg",
+          0.86,
+        );
+      });
+      const updated = await api.uploadVideoThumbnail(image.id, thumbnail);
+      onImageUpdated(updated);
+      setDetail((current) => (current ? { ...current, ...updated } : current));
+      setActionError(null);
+    } catch (err) {
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't save the video thumbnail. Try another frame.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reprocessCurrentMetadata() {
+    if (!image || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const updated = await reprocessMetadata(image);
+      onImageUpdated(updated);
+      setDetail((current) => (current ? { ...current, ...updated } : current));
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Couldn't reprocess this item's metadata.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEditingCaptureDate() {
+    if (!image) return;
+    setCaptureDateDraft(toLocalDateTimeInput(image.takenAt));
+    setEditingCaptureDate(true);
+    setShowInfo(true);
+  }
+
+  async function saveCaptureDate() {
+    if (!image || busy) return;
+    const takenAt = captureDateDraft ? new Date(captureDateDraft).getTime() : null;
+    if (
+      takenAt !== null &&
+      (!Number.isSafeInteger(takenAt) ||
+        takenAt <= Date.UTC(1980, 0, 1) ||
+        takenAt >= Date.now() + 86_400_000)
+    ) {
+      setActionError("Enter a valid capture date and time.");
+      return;
+    }
+
+    setBusy(true);
+    setActionError(null);
+    try {
+      const updated = await api.updateCaptureDate(image.id, takenAt);
+      onImageUpdated(updated);
+      setDetail((current) => (current ? { ...current, ...updated } : current));
+      setEditingCaptureDate(false);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Couldn't save the capture date.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteCurrent() {
     if (!image || busy) return;
     if (!confirmingDelete) {
@@ -232,15 +338,39 @@ export default function Lightbox({
         </span>
         <div className="flex items-center gap-1">
           <button
+            onClick={() => void reprocessCurrentMetadata()}
+            disabled={busy}
+            aria-label="Reprocess metadata"
+            title="Reprocess metadata"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-lg hover:bg-white/10 disabled:opacity-40"
+          >
+            <IconGear width="0.9em" height="0.9em" />
+          </button>
+          {isVideo && (
+            <button
+              onClick={() => void setVideoThumbnail()}
+              disabled={!videoReady || busy}
+              aria-label={`${image.thumbnailKey ? "Update" : "Set"} thumbnail from current video frame`}
+              title={`${image.thumbnailKey ? "Update" : "Set"} thumbnail from current frame`}
+              className="flex h-11 items-center gap-1.5 rounded-full px-3 text-sm text-stone-300 hover:bg-white/10 disabled:opacity-40"
+            >
+              <IconImage width="0.9em" height="0.9em" />
+              <span className="hidden sm:inline">{busy ? "Saving…" : "Use frame"}</span>
+            </button>
+          )}
+          <button
             onClick={() => setShowInfo((v) => !v)}
-            aria-label="Item details"
+            aria-label={hasMissingMetadata(image) ? "Item details, metadata missing" : "Item details"}
             aria-pressed={showInfo}
             aria-keyshortcuts="i"
-            className={`flex h-11 w-11 items-center justify-center rounded-full text-lg hover:bg-white/10 ${
+            className={`relative flex h-11 w-11 items-center justify-center rounded-full text-lg hover:bg-white/10 ${
               showInfo ? "bg-white/15 text-amber-400" : ""
             }`}
           >
             <IconInfo width="0.9em" height="0.9em" />
+            {hasMissingMetadata(image) && (
+              <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-black" />
+            )}
           </button>
           <a
             href={api.mediaUrl(image.mediaKey)}
@@ -287,11 +417,14 @@ export default function Lightbox({
         {isVideo ? (
           <video
             key={image.id}
+            ref={videoRef}
             src={api.mediaUrl(image.mediaKey)}
+            poster={image.thumbnailKey ? api.mediaUrl(image.thumbnailKey) : undefined}
             aria-label={caption ?? image.originalName}
             controls
             playsInline
             preload="metadata"
+            onLoadedData={() => setVideoReady(true)}
             className="max-h-full max-w-full"
           />
         ) : (
@@ -330,7 +463,19 @@ export default function Lightbox({
         )}
 
         {showInfo && (
-          <InfoPane image={image} detail={detail} onClose={() => setShowInfo(false)} />
+          <InfoPane
+            image={image}
+            detail={detail}
+            onClose={() => setShowInfo(false)}
+            onReprocess={() => void reprocessCurrentMetadata()}
+            onEditCaptureDate={startEditingCaptureDate}
+            editingCaptureDate={editingCaptureDate}
+            captureDateDraft={captureDateDraft}
+            onCaptureDateDraftChange={setCaptureDateDraft}
+            onSaveCaptureDate={() => void saveCaptureDate()}
+            onCancelCaptureDateEdit={() => setEditingCaptureDate(false)}
+            busy={busy}
+          />
         )}
       </div>
 
@@ -409,6 +554,33 @@ function formatBytes(n: number): string {
   return `${n} B`;
 }
 
+function formatDuration(durationMs: number): string {
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function toLocalDateTimeInput(timestamp: number | null): string {
+  if (timestamp === null) return "";
+  const date = new Date(timestamp);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function hasMissingMetadata(image: ApiImage): boolean {
+  return (
+    image.takenAt === null ||
+    image.camera === null ||
+    image.width === null ||
+    image.height === null ||
+    (image.contentType.startsWith("video/") && image.durationMs === null)
+  );
+}
+
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
@@ -428,10 +600,26 @@ function InfoPane({
   image,
   detail,
   onClose,
+  onReprocess,
+  onEditCaptureDate,
+  editingCaptureDate,
+  captureDateDraft,
+  onCaptureDateDraftChange,
+  onSaveCaptureDate,
+  onCancelCaptureDateEdit,
+  busy,
 }: {
   image: ApiImage;
   detail: ApiImageDetail | null;
   onClose: () => void;
+  onReprocess: () => void;
+  onEditCaptureDate: () => void;
+  editingCaptureDate: boolean;
+  captureDateDraft: string;
+  onCaptureDateDraftChange: (value: string) => void;
+  onSaveCaptureDate: () => void;
+  onCancelCaptureDateEdit: () => void;
+  busy: boolean;
 }) {
   const type = image.contentType.split("/")[1]?.toUpperCase() ?? image.contentType;
   const megapixels =
@@ -465,6 +653,20 @@ function InfoPane({
 
       {/* Capture: the headline fact */}
       <div className="px-5 pb-4 pt-1">
+        {hasMissingMetadata(image) && (
+          <div className="mb-3 rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2">
+            <p className="text-xs text-amber-200">
+              Some metadata is missing. Reprocess the file or enter its capture date.
+            </p>
+            <button
+              onClick={onReprocess}
+              disabled={busy}
+              className="mt-1 min-h-9 rounded-md px-2 text-xs font-medium text-amber-300 hover:bg-amber-300/10 disabled:opacity-50"
+            >
+              Reprocess metadata
+            </button>
+          </div>
+        )}
         {taken ? (
           <>
             <div className="text-lg font-semibold tracking-tight text-stone-100">
@@ -483,6 +685,52 @@ function InfoPane({
             Capture date not recorded
           </div>
         )}
+        {editingCaptureDate ? (
+          <div className="mt-3 flex flex-col gap-2">
+            <label htmlFor="capture-date" className="text-xs text-stone-400">
+              Capture date and time
+            </label>
+            <input
+              id="capture-date"
+              type="datetime-local"
+              value={captureDateDraft}
+              onChange={(event) => onCaptureDateDraftChange(event.currentTarget.value)}
+              className="min-h-11 rounded-lg border border-stone-700 bg-stone-950 px-3 text-sm text-stone-100 outline-none focus:border-amber-400"
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              {image.takenAt !== null && (
+                <button
+                  onClick={() => onCaptureDateDraftChange("")}
+                  disabled={busy}
+                  className="min-h-10 rounded-lg px-2 text-xs text-stone-400 hover:bg-white/5 disabled:opacity-50"
+                >
+                  Clear date
+                </button>
+              )}
+              <button
+                onClick={onCancelCaptureDateEdit}
+                disabled={busy}
+                className="min-h-10 rounded-lg px-2 text-xs text-stone-400 hover:bg-white/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onSaveCaptureDate}
+                disabled={busy}
+                className="min-h-10 rounded-lg bg-amber-400 px-3 text-xs font-medium text-stone-950 hover:bg-amber-300 disabled:opacity-50"
+              >
+                {busy ? "Saving…" : "Save date"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={onEditCaptureDate}
+            className="mt-2 min-h-9 rounded-md px-2 text-xs text-stone-400 hover:bg-white/5 hover:text-stone-200"
+          >
+            {image.takenAt === null ? "Add capture date" : "Edit capture date"}
+          </button>
+        )}
         {image.camera && (
           <div className="mt-2 flex items-center gap-2 text-sm text-stone-300">
             <IconDeviceCamera className="shrink-0 text-stone-500" />
@@ -499,6 +747,11 @@ function InfoPane({
           {image.width && image.height ? `${image.width} × ${image.height}` : "Unknown"}
         </Fact>
         <Fact label="Megapixels">{megapixels ? `${megapixels} MP` : "—"}</Fact>
+        {image.contentType.startsWith("video/") && (
+          <Fact label="Duration">
+            {image.durationMs ? formatDuration(image.durationMs) : "Unknown"}
+          </Fact>
+        )}
         <Fact label="Format">{type}</Fact>
         <Fact label="File size">{formatBytes(image.sizeBytes)}</Fact>
       </div>

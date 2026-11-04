@@ -116,6 +116,53 @@ export function updateCaption(id: string, caption: string | null): Promise<ApiIm
   return request("PATCH", `/api/images/${encodeURIComponent(id)}`, { caption });
 }
 
+export function updateCaptureDate(id: string, takenAt: number | null): Promise<ApiImageDetail> {
+  return request("PATCH", `/api/images/${encodeURIComponent(id)}`, { takenAt });
+}
+
+export function reprocessImageMetadata(id: string): Promise<ApiImage> {
+  return request("POST", `/api/images/${encodeURIComponent(id)}/reprocess-metadata`);
+}
+
+export function saveVideoMetadata(
+  id: string,
+  metadata: {
+    width: number | null;
+    height: number | null;
+    takenAt: number | null;
+    camera: string | null;
+    durationMs: number | null;
+  },
+): Promise<ApiImage> {
+  return request("POST", `/api/images/${encodeURIComponent(id)}/reprocess-metadata`, metadata);
+}
+
+export async function uploadVideoThumbnail(id: string, thumbnail: Blob): Promise<ApiImage> {
+  const path = `/api/images/${encodeURIComponent(id)}/thumbnail`;
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "image/jpeg",
+      ...userHeader(),
+    },
+    body: thumbnail,
+  });
+
+  if (res.status === 401) unauthorizedHandler?.();
+  if (!res.ok) {
+    let message = `Thumbnail upload failed (${res.status})`;
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      // Non-JSON error body; keep the fallback message.
+    }
+    throw new ApiError(message, res.status);
+  }
+  return (await res.json()) as ApiImage;
+}
+
 export function deleteImage(id: string): Promise<void> {
   return request("DELETE", `/api/images/${encodeURIComponent(id)}`);
 }
@@ -228,6 +275,29 @@ export function removeImageFromCollection(collectionId: string, imageId: string)
 export function mediaUrl(mediaKey: string, variant?: "thumb" | "full"): string {
   const base = `/media/${encodeURIComponent(mediaKey)}`;
   return variant ? `${base}?v=${variant}` : base;
+}
+
+export async function readMediaRange(
+  mediaKey: string,
+  offset: number,
+  size: number,
+): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(size) || size <= 0) {
+    throw new Error("Invalid media byte range");
+  }
+  const res = await fetch(mediaUrl(mediaKey), {
+    credentials: "include",
+    headers: { Range: `bytes=${offset}-${offset + size - 1}` },
+  });
+  if (res.status === 401) unauthorizedHandler?.();
+  if (res.status !== 206) {
+    throw new ApiError(`Couldn't read media metadata (${res.status})`, res.status);
+  }
+  const chunk = new Uint8Array(await res.arrayBuffer());
+  if (chunk.byteLength !== size) {
+    throw new Error("The media returned an incomplete metadata range");
+  }
+  return chunk;
 }
 
 /** srcset spanning both presets so the browser picks per DPR/viewport. */

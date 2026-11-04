@@ -11,11 +11,13 @@ import type {
 interface ImageRow {
   id: string;
   r2_key: string;
+  thumbnail_key: string | null;
   original_name: string;
   content_type: string;
   size_bytes: number;
   width: number | null;
   height: number | null;
+  duration_ms: number | null;
   caption: string | null;
   uploaded_by: string | null;
   taken_at: number | null;
@@ -47,11 +49,13 @@ export function rowToImage(row: ImageRow): ApiImage {
   return {
     id: row.id,
     mediaKey: row.r2_key,
+    thumbnailKey: row.thumbnail_key,
     originalName: row.original_name,
     contentType: row.content_type,
     sizeBytes: row.size_bytes,
     width: row.width,
     height: row.height,
+    durationMs: row.duration_ms,
     caption: row.caption,
     uploadedBy: row.uploaded_by,
     takenAt: row.taken_at,
@@ -161,6 +165,54 @@ export async function getImage(db: D1Database, id: string): Promise<ApiImage | n
     .bind(id)
     .first<ImageRow>();
   return row ? rowToImage(row) : null;
+}
+
+export async function updateVideoThumbnail(
+  db: D1Database,
+  id: string,
+  thumbnailKey: string,
+  now: number,
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `UPDATE images
+       SET thumbnail_key = ?, updated_at = ?
+       WHERE id = ? AND content_type LIKE 'video/%' AND deleted_at IS NULL`,
+    )
+    .bind(thumbnailKey, now, id)
+    .run();
+  return res.meta.changes > 0;
+}
+
+export async function updateImageMetadata(
+  db: D1Database,
+  id: string,
+  metadata: {
+    width: number | null;
+    height: number | null;
+    takenAt: number | null;
+    camera: string | null;
+    durationMs: number | null;
+  },
+  now: number,
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `UPDATE images
+       SET width = ?, height = ?, taken_at = ?, camera = ?, duration_ms = ?, updated_at = ?
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .bind(
+      metadata.width,
+      metadata.height,
+      metadata.takenAt,
+      metadata.camera,
+      metadata.durationMs,
+      now,
+      id,
+    )
+    .run();
+  return res.meta.changes > 0;
 }
 
 export async function getImageByKey(db: D1Database, r2Key: string): Promise<ApiImage | null> {
@@ -341,6 +393,19 @@ export async function updateImageCaption(
   return res.meta.changes > 0;
 }
 
+export async function updateImageCaptureDate(
+  db: D1Database,
+  id: string,
+  takenAt: number | null,
+  now: number,
+): Promise<boolean> {
+  const res = await db
+    .prepare(`UPDATE images SET taken_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`)
+    .bind(takenAt, now, id)
+    .run();
+  return res.meta.changes > 0;
+}
+
 /** How long soft-deleted photos stay recoverable before the lazy purge. */
 export const PURGE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -407,11 +472,16 @@ export async function listDeletedImages(db: D1Database): Promise<ApiImage[]> {
 export async function purgeExpiredDeletions(db: D1Database, bucket: R2Bucket, now: number): Promise<number> {
   const cutoff = now - PURGE_AFTER_MS;
   const { results } = await db
-    .prepare(`SELECT id, r2_key FROM images WHERE deleted_at IS NOT NULL AND deleted_at < ? LIMIT 50`)
+    .prepare(
+      `SELECT id, r2_key, thumbnail_key FROM images
+       WHERE deleted_at IS NOT NULL AND deleted_at < ? LIMIT 50`,
+    )
     .bind(cutoff)
-    .all<{ id: string; r2_key: string }>();
+    .all<{ id: string; r2_key: string; thumbnail_key: string | null }>();
   if (results.length === 0) return 0;
-  await bucket.delete(results.map((r) => r.r2_key));
+  await bucket.delete(
+    results.flatMap((r) => (r.thumbnail_key ? [r.r2_key, r.thumbnail_key] : [r.r2_key])),
+  );
   const placeholders = results.map(() => "?").join(", ");
   await db
     .prepare(`DELETE FROM images WHERE id IN (${placeholders})`)

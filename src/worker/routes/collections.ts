@@ -77,7 +77,7 @@ async function create(ctx: Ctx): Promise<Response> {
 async function detail(ctx: Ctx): Promise<Response> {
   const collection = await getCollection(ctx.env.DB, ctx.params.id);
   if (!collection) return error("Collection not found", 404);
-  const sortRaw = ctx.url.searchParams.get("sort") ?? "newest";
+  const sortRaw = ctx.url.searchParams.get("sort") ?? "capture-oldest";
   if (!isImageSort(sortRaw)) {
     return error("sort is not supported", 400);
   }

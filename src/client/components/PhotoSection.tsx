@@ -7,6 +7,7 @@ import {
 } from "../../shared/types";
 import type { ImageFeed } from "../lib/useImageFeed";
 import * as api from "../lib/api";
+import { reprocessMetadata } from "../lib/metadata";
 import ImageGrid from "./ImageGrid";
 import Lightbox from "./Lightbox";
 import CollectionPicker from "./CollectionPicker";
@@ -58,6 +59,11 @@ export default function PhotoSection({
   const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [metadataRunning, setMetadataRunning] = useState(false);
+  const [metadataProgress, setMetadataProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const [metadataStatus, setMetadataStatus] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ imageIds: string[]; current?: Set<string> } | null>(
     null,
   );
@@ -66,6 +72,7 @@ export default function PhotoSection({
 
   function applySelection(index: number, shift: boolean) {
     const images = feed.images;
+    setMetadataStatus(null);
     // Capture the anchor now: the setState updater runs later (at render),
     // by which point lastToggled has already moved to this click.
     const anchor = lastToggled.current;
@@ -163,6 +170,44 @@ export default function PhotoSection({
     }
   }
 
+  async function reprocessSelectedMetadata() {
+    if (metadataRunning) return;
+    const selected = feed.images.filter((image) => selectedIds.has(image.id));
+    if (selected.length === 0) return;
+
+    setMetadataRunning(true);
+    setMetadataStatus(null);
+    setMetadataProgress({ done: 0, total: selected.length });
+    const failures: string[] = [];
+    let updatedCount = 0;
+    try {
+      for (let index = 0; index < selected.length; index++) {
+        const image = selected[index];
+        setMetadataProgress({ done: index, total: selected.length });
+        try {
+          feed.replaceImage(await reprocessMetadata(image));
+          updatedCount++;
+        } catch (err) {
+          failures.push(
+            `${image.originalName}: ${
+              err instanceof Error ? err.message : "metadata processing failed"
+            }`,
+          );
+        }
+        setMetadataProgress({ done: index + 1, total: selected.length });
+      }
+      emit("images-changed");
+      setMetadataStatus(
+        failures.length > 0
+          ? `Updated ${updatedCount} of ${selected.length}. ${failures.length} failed: ${failures[0]}`
+          : `Metadata refreshed for ${updatedCount} ${updatedCount === 1 ? "item" : "items"}.`,
+      );
+    } finally {
+      setMetadataRunning(false);
+      setMetadataProgress(null);
+    }
+  }
+
   function openPickerForDetail(detail: ApiImageDetail) {
     setPicker({
       imageIds: [detail.id],
@@ -245,6 +290,15 @@ export default function PhotoSection({
       {selecting && selectedIds.size > 0 && (
         <SelectionBar count={selectedIds.size} onCancel={clearSelection}>
           <button
+            onClick={() => void reprocessSelectedMetadata()}
+            disabled={metadataRunning}
+            className="min-h-11 rounded-lg bg-stone-800 px-3 text-sm text-stone-200 hover:bg-stone-700 disabled:opacity-50"
+          >
+            {metadataRunning && metadataProgress
+              ? `Processing ${metadataProgress.done}/${metadataProgress.total}…`
+              : "Reprocess metadata"}
+          </button>
+          <button
             onClick={() => setPicker({ imageIds: [...selectedIds] })}
             className="min-h-11 rounded-lg bg-amber-400 px-3 text-sm font-medium text-stone-950 hover:bg-amber-300"
           >
@@ -269,6 +323,14 @@ export default function PhotoSection({
             Delete
           </button>
           {extraSelectionActions?.({ selectedIds, clear: clearSelection })}
+          {metadataStatus && (
+            <p
+              role={metadataStatus.startsWith("Updated ") ? "alert" : "status"}
+              className="basis-full px-1 text-xs text-stone-300"
+            >
+              {metadataStatus}
+            </p>
+          )}
         </SelectionBar>
       )}
 

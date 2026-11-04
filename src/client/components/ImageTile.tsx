@@ -5,6 +5,7 @@ import { getSessionSince } from "../lib/lastSeen";
 import { getStoredDisplayName } from "../lib/user";
 import { IconCheck } from "./icons";
 import VideoPlaceholder from "./VideoPlaceholder";
+import VideoBadge from "./VideoBadge";
 
 /** Sizes hint matching the grid's column breakpoints. */
 export const TILE_SIZES =
@@ -41,11 +42,24 @@ export default function ImageTile({
         selected ? "ring-2 ring-amber-400" : ""
       }`}
     >
-      {!loaded && (
+      {!loaded && !image.contentType.startsWith("video/") && (
         <div className="absolute inset-0 animate-pulse bg-stone-800/80" aria-hidden />
       )}
       {image.contentType.startsWith("video/") ? (
-        <VideoPlaceholder />
+        image.thumbnailKey ? (
+          <img
+            src={mediaUrl(image.thumbnailKey)}
+            alt={alt}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            className={`h-full w-full object-cover transition-[opacity,transform] duration-300 motion-reduce:transition-none ${
+              loaded ? "opacity-100" : "opacity-0"
+            } ${selected ? "scale-95" : "group-hover:scale-[1.03]"}`}
+          />
+        ) : (
+          <VideoPlaceholder />
+        )
       ) : (
         <img
           src={mediaUrl(image.mediaKey, "thumb")}
@@ -68,6 +82,7 @@ export default function ImageTile({
           <span className="sr-only">New since your last visit</span>
         </span>
       )}
+      {image.contentType.startsWith("video/") && image.thumbnailKey && <VideoBadge />}
       {selectable && (
         <span
           aria-hidden
