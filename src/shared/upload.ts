@@ -1,0 +1,3 @@
+export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+export const MULTIPART_CHUNK_BYTES = 16 * 1024 * 1024;
+export const MULTIPART_UPLOAD_THRESHOLD = 64 * 1024 * 1024;

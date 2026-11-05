@@ -2,17 +2,19 @@ import type { Ctx, Router } from "../router";
 import { error, json, noContent, readJson } from "../lib/json";
 import {
   ALLOWED_MEDIA_TYPES,
-  MAX_UPLOAD_BYTES,
   generateR2Key,
   sanitizeOriginalName,
 } from "../lib/r2";
 import { extractDimensions, sniffMediaType } from "../lib/imageMeta";
 import { EXIF_SCAN_BYTES, parseExif } from "../lib/exif";
 import {
+  deleteUploadSession,
   clampLimit,
+  getUploadSession,
   getImage,
   getImageMemberships,
   insertImage,
+  insertUploadSession,
   listDeletedImages,
   listImages,
   purgeExpiredDeletions,
@@ -25,9 +27,14 @@ import {
   updateImageCaption,
 } from "../db/queries";
 import { isImageSort, type ApiImageDetail, type ImageFilter } from "../../shared/types";
+import { MAX_UPLOAD_BYTES, MULTIPART_CHUNK_BYTES } from "../../shared/upload";
 
 export function registerImageRoutes(router: Router): void {
   router.post("/api/images", upload);
+  router.post("/api/uploads", startMultipartUpload);
+  router.post("/api/uploads/:id/parts/:partNumber", uploadMultipartPart);
+  router.post("/api/uploads/:id/complete", completeMultipartUpload);
+  router.delete("/api/uploads/:id", abortMultipartUpload);
   router.get("/api/images", list);
   router.post("/api/images/bulk-delete", bulkRemove);
   router.post("/api/images/:id/thumbnail", setVideoThumbnail);
@@ -66,7 +73,7 @@ async function upload(ctx: Ctx): Promise<Response> {
     return error("Missing upload size", 411);
   }
   if (declaredSize > MAX_UPLOAD_BYTES) {
-    return error("File exceeds the 100 MB upload limit", 413);
+    return error("File exceeds the 200 MB upload limit", 413);
   }
   if (!ctx.req.body) return error("Empty upload body", 400);
 
@@ -84,44 +91,210 @@ async function upload(ctx: Ctx): Promise<Response> {
     return error("Upload failed, please retry", 500);
   }
 
-  // Verify the payload really is the declared media type via magic bytes.
-  const head = await ctx.env.BUCKET.get(key, { range: { offset: 0, length: 32 } });
-  const headBytes = head ? new Uint8Array(await head.arrayBuffer()) : new Uint8Array(0);
-  const sniffed = sniffMediaType(headBytes);
-  if (sniffed !== contentType) {
-    await ctx.env.BUCKET.delete(key);
-    return error("File content does not match its declared media type", 415);
-  }
-
-  const isImage = contentType.startsWith("image/");
-  const dims = isImage ? await extractDimensions(ctx.env, key) : null;
-
-  // Index capture metadata from the EXIF header (the R2 original keeps the
-  // full metadata regardless).
-  let exif = { takenAt: null as number | null, camera: null as string | null };
-  if (contentType === "image/jpeg") {
-    const head2 = await ctx.env.BUCKET.get(key, {
-      range: { offset: 0, length: Math.min(EXIF_SCAN_BYTES, stored.size) },
-    });
-    if (head2) exif = parseExif(new Uint8Array(await head2.arrayBuffer()));
-  }
-
-  const now = Date.now();
-  await insertImage(ctx.env.DB, {
+  return finalizeUpload(ctx, {
     id,
     r2Key: key,
     originalName,
     contentType,
     sizeBytes: stored.size,
+    uploadedBy: ctx.displayName,
+  });
+}
+
+interface MultipartStartInput {
+  contentType: string;
+  originalName: string;
+  sizeBytes: number;
+}
+
+async function startMultipartUpload(ctx: Ctx): Promise<Response> {
+  if (!ctx.displayName) return error("Set a display name before uploading", 400);
+  const input = await readJson<MultipartStartInput>(ctx.req);
+  if (
+    !input ||
+    typeof input.contentType !== "string" ||
+    typeof input.sizeBytes !== "number" ||
+    !Number.isSafeInteger(input.sizeBytes) ||
+    input.sizeBytes <= 0
+  ) {
+    return error("Invalid multipart upload details", 400);
+  }
+  const contentType = input.contentType.trim().toLowerCase();
+  if (!ALLOWED_MEDIA_TYPES[contentType]) {
+    return error("Unsupported media type", 415);
+  }
+  if (input.sizeBytes > MAX_UPLOAD_BYTES) {
+    return error("File exceeds the 200 MB upload limit", 413);
+  }
+
+  const id = crypto.randomUUID();
+  const r2Key = generateR2Key(id, contentType);
+  const multipart = await ctx.env.BUCKET.createMultipartUpload(r2Key, {
+    httpMetadata: { contentType },
+  });
+  const session = {
+    id,
+    r2Key,
+    r2UploadId: multipart.uploadId,
+    originalName: sanitizeOriginalName(
+      typeof input.originalName === "string" ? input.originalName : null,
+      `upload.${ALLOWED_MEDIA_TYPES[contentType]}`,
+    ),
+    contentType,
+    sizeBytes: input.sizeBytes,
+    uploadedBy: ctx.displayName,
+  };
+  try {
+    await insertUploadSession(ctx.env.DB, session, Date.now());
+  } catch (err) {
+    try {
+      await multipart.abort();
+    } catch (abortErr) {
+      console.error("Could not abort multipart upload after session creation failed", {
+        key: r2Key,
+        abortErr,
+      });
+    }
+    throw err;
+  }
+
+  return json({ id, chunkSize: MULTIPART_CHUNK_BYTES }, 201);
+}
+
+async function uploadMultipartPart(ctx: Ctx): Promise<Response> {
+  const session = await getUploadSession(ctx.env.DB, ctx.params.id);
+  if (!session) return error("Upload session not found", 404);
+  const partNumber = Number(ctx.params.partNumber);
+  const partCount = Math.ceil(session.sizeBytes / MULTIPART_CHUNK_BYTES);
+  if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > partCount) {
+    return error("Invalid multipart part number", 400);
+  }
+  const expectedSize = Math.min(
+    MULTIPART_CHUNK_BYTES,
+    session.sizeBytes - (partNumber - 1) * MULTIPART_CHUNK_BYTES,
+  );
+  const contentLength = Number(ctx.req.headers.get("Content-Length"));
+  if (!Number.isSafeInteger(contentLength) || contentLength !== expectedSize) {
+    return error("Multipart part size does not match the expected size", 400);
+  }
+  if (!ctx.req.body) return error("Empty multipart part", 400);
+
+  const multipart = ctx.env.BUCKET.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+  const uploadedPart = await multipart.uploadPart(partNumber, ctx.req.body);
+  return json({ partNumber, etag: uploadedPart.etag });
+}
+
+interface MultipartCompleteInput {
+  parts: Array<{ partNumber: number; etag: string }>;
+}
+
+async function completeMultipartUpload(ctx: Ctx): Promise<Response> {
+  const session = await getUploadSession(ctx.env.DB, ctx.params.id);
+  if (!session) return error("Upload session not found", 404);
+  const input = await readJson<MultipartCompleteInput>(ctx.req);
+  const partCount = Math.ceil(session.sizeBytes / MULTIPART_CHUNK_BYTES);
+  if (
+    !input ||
+    !Array.isArray(input.parts) ||
+    input.parts.length !== partCount ||
+    input.parts.some(
+      (part, index) =>
+        !part ||
+        part.partNumber !== index + 1 ||
+        typeof part.etag !== "string" ||
+        part.etag.length === 0,
+    )
+  ) {
+    return error("Invalid multipart completion details", 400);
+  }
+
+  const multipart = ctx.env.BUCKET.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+  const stored = await multipart.complete(input.parts);
+  if (stored.size !== session.sizeBytes) {
+    await ctx.env.BUCKET.delete(session.r2Key);
+    await deleteUploadSession(ctx.env.DB, session.id);
+    return error("Uploaded file size does not match the declared size", 400);
+  }
+
+  try {
+    const response = await finalizeUpload(ctx, session);
+    await deleteUploadSession(ctx.env.DB, session.id);
+    return response;
+  } catch (err) {
+    // Keep an object already indexed in D1 intact if only session cleanup failed.
+    const imageExists = await getImage(ctx.env.DB, session.id).catch((lookupErr: unknown) => {
+      console.error("Could not check image after multipart completion failed", {
+        id: session.id,
+        lookupErr,
+      });
+      return true;
+    });
+    if (!imageExists) {
+      try {
+        await ctx.env.BUCKET.delete(session.r2Key);
+        await deleteUploadSession(ctx.env.DB, session.id);
+      } catch (cleanupErr) {
+        console.error("Could not clean up completed multipart upload", {
+          key: session.r2Key,
+          cleanupErr,
+        });
+      }
+    }
+    throw err;
+  }
+}
+
+async function abortMultipartUpload(ctx: Ctx): Promise<Response> {
+  const session = await getUploadSession(ctx.env.DB, ctx.params.id);
+  if (!session) return noContent();
+  const multipart = ctx.env.BUCKET.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+  await multipart.abort();
+  await deleteUploadSession(ctx.env.DB, session.id);
+  return noContent();
+}
+
+async function finalizeUpload(
+  ctx: Ctx,
+  upload: {
+    id: string;
+    r2Key: string;
+    originalName: string;
+    contentType: string;
+    sizeBytes: number;
+    uploadedBy: string | null;
+  },
+): Promise<Response> {
+  const head = await ctx.env.BUCKET.get(upload.r2Key, { range: { offset: 0, length: 32 } });
+  const headBytes = head ? new Uint8Array(await head.arrayBuffer()) : new Uint8Array(0);
+  if (sniffMediaType(headBytes) !== upload.contentType) {
+    await ctx.env.BUCKET.delete(upload.r2Key);
+    return error("File content does not match its declared media type", 415);
+  }
+
+  const isImage = upload.contentType.startsWith("image/");
+  const dims = isImage ? await extractDimensions(ctx.env, upload.r2Key) : null;
+  let exif = { takenAt: null as number | null, camera: null as string | null };
+  if (upload.contentType === "image/jpeg") {
+    const head2 = await ctx.env.BUCKET.get(upload.r2Key, {
+      range: { offset: 0, length: Math.min(EXIF_SCAN_BYTES, upload.sizeBytes) },
+    });
+    if (head2) exif = parseExif(new Uint8Array(await head2.arrayBuffer()));
+  }
+
+  await insertImage(ctx.env.DB, {
+    id: upload.id,
+    r2Key: upload.r2Key,
+    originalName: upload.originalName,
+    contentType: upload.contentType,
+    sizeBytes: upload.sizeBytes,
     width: dims?.width ?? null,
     height: dims?.height ?? null,
-    uploadedBy: ctx.displayName,
+    uploadedBy: upload.uploadedBy,
     takenAt: exif.takenAt,
     camera: exif.camera,
-    createdAt: now,
+    createdAt: Date.now(),
   });
-
-  const image = await getImage(ctx.env.DB, id);
+  const image = await getImage(ctx.env.DB, upload.id);
   return json(image, 201);
 }
 

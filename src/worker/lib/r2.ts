@@ -10,7 +10,7 @@ export const ALLOWED_MEDIA_TYPES: Record<string, string> = {
   "video/quicktime": "mov",
 };
 
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MiB (Worker request body cap is 100 MB)
+export { MAX_UPLOAD_BYTES } from "../../shared/upload";
 
 /**
  * Generates the R2 object key for a new upload. Always server-generated —

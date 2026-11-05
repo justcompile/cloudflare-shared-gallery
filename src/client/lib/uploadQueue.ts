@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, uploadMedia } from "./api";
 import { emit } from "./events";
+import { MAX_UPLOAD_BYTES } from "../../shared/upload";
 
 /**
  * App-wide upload queue. Both the upload buttons and the page-wide drop zone
@@ -45,8 +46,6 @@ export interface UploadBatch {
 
 const CONCURRENCY = 3;
 const MAX_ATTEMPTS = 4; // 1 initial try + 3 automatic retries
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
-
 let items: InternalItem[] = [];
 let active = 0;
 let snapshot: QueueItem[] = [];
@@ -202,7 +201,7 @@ export function enqueueUploads(files: File[]): UploadBatch {
     };
     if (file.size > MAX_UPLOAD_BYTES) {
       item.status = "error";
-      item.error = "Larger than the 100 MB limit";
+      item.error = "Larger than the 200 MiB limit";
       items.push(item);
       markSettled(item);
       continue;

@@ -10,6 +10,10 @@ import type {
   Paginated,
 } from "../../shared/types";
 import { getStoredDisplayName } from "./user";
+import {
+  MULTIPART_CHUNK_BYTES,
+  MULTIPART_UPLOAD_THRESHOLD,
+} from "../../shared/upload";
 
 export class ApiError extends Error {
   constructor(
@@ -187,6 +191,9 @@ export function uploadMedia(
   file: File,
   onProgress: (fraction: number) => void,
 ): Promise<ApiImage> {
+  if (file.size > MULTIPART_UPLOAD_THRESHOLD) {
+    return uploadLargeMedia(file, onProgress);
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/images");
@@ -213,6 +220,97 @@ export function uploadMedia(
     xhr.onerror = () => reject(new ApiError("Network error during upload", 0));
     xhr.onabort = () => reject(new ApiError("Upload cancelled", 0));
     xhr.send(file);
+  });
+}
+
+interface MultipartStartResponse {
+  id: string;
+  chunkSize: number;
+}
+
+interface MultipartPartResponse {
+  partNumber: number;
+  etag: string;
+}
+
+async function uploadLargeMedia(
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<ApiImage> {
+  const upload = await request<MultipartStartResponse>("POST", "/api/uploads", {
+    contentType: file.type || "application/octet-stream",
+    originalName: file.name,
+    sizeBytes: file.size,
+  });
+  try {
+    if (upload.chunkSize !== MULTIPART_CHUNK_BYTES) {
+      throw new ApiError("Server returned an unsupported upload chunk size", 500);
+    }
+    const parts: MultipartPartResponse[] = [];
+    const count = Math.ceil(file.size / upload.chunkSize);
+    for (let index = 0; index < count; index++) {
+      const start = index * upload.chunkSize;
+      const end = Math.min(file.size, start + upload.chunkSize);
+      const partNumber = index + 1;
+      const part = await uploadMultipartPart(
+        upload.id,
+        partNumber,
+        file.slice(start, end),
+        (fraction) => onProgress((start + fraction * (end - start)) / file.size),
+      );
+      parts.push(part);
+    }
+
+    const image = await request<ApiImage>("POST", `/api/uploads/${encodeURIComponent(upload.id)}/complete`, {
+      parts,
+    });
+    onProgress(1);
+    return image;
+  } catch (err) {
+    try {
+      await request<void>("DELETE", `/api/uploads/${encodeURIComponent(upload.id)}`);
+    } catch (abortErr) {
+      console.error("Could not abort failed multipart upload", { uploadId: upload.id, abortErr });
+    }
+    throw err;
+  }
+}
+
+function uploadMultipartPart(
+  uploadId: string,
+  partNumber: number,
+  part: Blob,
+  onProgress: (fraction: number) => void,
+): Promise<MultipartPartResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      `/api/uploads/${encodeURIComponent(uploadId)}/parts/${partNumber}`,
+    );
+    xhr.withCredentials = true;
+    xhr.responseType = "json";
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    const user = userHeader();
+    for (const [k, v] of Object.entries(user)) xhr.setRequestHeader(k, v);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) unauthorizedHandler?.();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as MultipartPartResponse);
+      } else {
+        const message =
+          (xhr.response as { error?: string } | null)?.error ??
+          `Upload part failed (${xhr.status})`;
+        reject(new ApiError(message, xhr.status));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Network error during upload", 0));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled", 0));
+    xhr.send(part);
   });
 }
 

@@ -45,6 +45,38 @@ type CollectionListRow = CollectionRow & {
   effective_cover_id: string | null;
 };
 
+export interface UploadSession {
+  id: string;
+  r2Key: string;
+  r2UploadId: string;
+  originalName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+}
+
+interface UploadSessionRow {
+  id: string;
+  r2_key: string;
+  r2_upload_id: string;
+  original_name: string;
+  content_type: string;
+  size_bytes: number;
+  uploaded_by: string;
+}
+
+function rowToUploadSession(row: UploadSessionRow): UploadSession {
+  return {
+    id: row.id,
+    r2Key: row.r2_key,
+    r2UploadId: row.r2_upload_id,
+    originalName: row.original_name,
+    contentType: row.content_type,
+    sizeBytes: row.size_bytes,
+    uploadedBy: row.uploaded_by,
+  };
+}
+
 export function rowToImage(row: ImageRow): ApiImage {
   return {
     id: row.id,
@@ -157,6 +189,42 @@ export async function insertImage(db: D1Database, img: NewImage): Promise<void> 
       img.createdAt,
     )
     .run();
+}
+
+export async function insertUploadSession(
+  db: D1Database,
+  session: UploadSession,
+  createdAt: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO upload_sessions
+       (id, r2_key, r2_upload_id, original_name, content_type, size_bytes, uploaded_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      session.id,
+      session.r2Key,
+      session.r2UploadId,
+      session.originalName,
+      session.contentType,
+      session.sizeBytes,
+      session.uploadedBy,
+      createdAt,
+    )
+    .run();
+}
+
+export async function getUploadSession(db: D1Database, id: string): Promise<UploadSession | null> {
+  const row = await db
+    .prepare("SELECT * FROM upload_sessions WHERE id = ?")
+    .bind(id)
+    .first<UploadSessionRow>();
+  return row ? rowToUploadSession(row) : null;
+}
+
+export async function deleteUploadSession(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM upload_sessions WHERE id = ?").bind(id).run();
 }
 
 export async function getImage(db: D1Database, id: string): Promise<ApiImage | null> {

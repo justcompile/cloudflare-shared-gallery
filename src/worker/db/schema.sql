@@ -70,3 +70,15 @@ ALTER TABLE images ADD COLUMN thumbnail_key TEXT;
 
 -- Migration 0005: indexed video duration.
 ALTER TABLE images ADD COLUMN duration_ms INTEGER;
+
+-- Migration 0006: active R2 multipart upload metadata.
+CREATE TABLE upload_sessions (
+  id              TEXT PRIMARY KEY,
+  r2_key          TEXT NOT NULL UNIQUE,
+  r2_upload_id    TEXT NOT NULL UNIQUE,
+  original_name   TEXT NOT NULL,
+  content_type    TEXT NOT NULL,
+  size_bytes      INTEGER NOT NULL,
+  uploaded_by     TEXT NOT NULL,
+  created_at      INTEGER NOT NULL
+);

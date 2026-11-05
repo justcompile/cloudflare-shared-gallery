@@ -60,7 +60,7 @@ npm run dev
 The design keeps everything inside Cloudflare's free tiers: 10 GB of photo storage,
 100k requests/day, and 5,000 image transformations per 30 days (roughly 2,500 photos;
 thumbnails are aggressively cached so repeats are free). The in-app footer shows live
-usage. Uploads are limited to 100 MB per file. Videos play directly from R2 and
+usage. Uploads are limited to 200 MB per file. Videos play directly from R2 and
 support seeking; they are not resized or transcoded. Details and design
 constraints are in [docs/PRD.md](docs/PRD.md) and [AGENTS.md](AGENTS.md).
 
@@ -68,6 +68,10 @@ Deletes are soft: photos sit in "Recently deleted" (Settings menu) for 30 days, 
 anyone can restore them, collections included. Nothing is permanently removed before
 then, so a leaked password or a bad day cannot destroy the gallery. D1 Time Travel
 (built into Cloudflare, 30 days) is a further metadata backstop.
+
+Uploads over 64 MiB use R2 multipart uploads through the authenticated Worker. The
+browser sends 16 MiB chunks as separate requests, so files up to the 200 MiB app
+limit do not run into Cloudflare's 100 MB per-request body limit.
 
 To log every device out, rotate the session key:
 `openssl rand -base64 32 | npx wrangler secret put JWT_SECRET`.

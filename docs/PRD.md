@@ -63,7 +63,7 @@ Proceed with the default. Each is a single switch that can be revisited later wi
 
 - **D1. Authentication.** A **single shared password** gates the whole gallery, with a long lived JWT session so members are not re-prompted. No user accounts, no emails. The password is stored only as a PBKDF2 hash in a Wrangler secret; the session is an HS256 JWT delivered in an httpOnly cookie. Full model in section 8. Everything requires a valid session by default. Read endpoints and mutation endpoints are kept separate so that open public viewing could be enabled later (ungate reads only) without touching writes, but do not build a public mode now.
 - **D2. Identity model.** Default: **single shared space** with **self-declared display names** for attribution. Everyone who knows the password shares one pool of images and collections. There are no accounts and no access partitioning: the display name is a soft label recording who uploaded or tagged something, not a security boundary (anyone with the password could type any name, which is acceptable for a small trusted group). Full flow in section 6.
-- **D3. Upload transport.** Client streams the upload to the Worker, which writes to R2. Enforce a max upload size of **100 MB**. Support JPEG, PNG, GIF, WebP, and AVIF images, plus MP4, WebM, and QuickTime videos. Videos are streamed from R2 with byte-range support for browser playback and seeking; they are not transformed or transcoded. A poster can be captured from the current frame in the browser and stored separately in R2.
+- **D3. Upload transport.** The client streams uploads through the authenticated Worker into R2. Files up to 64 MiB use one request; larger files use R2 multipart uploads with 16 MiB chunks, keeping every Worker request below Cloudflare's 100 MB request-body limit on Free. Enforce a maximum file size of **200 MiB**. Support JPEG, PNG, GIF, WebP, and AVIF images, plus MP4, WebM, and QuickTime videos. Videos are streamed from R2 with byte-range support for browser playback and seeking; they are not transformed or transcoded. A poster can be captured from the current frame in the browser and stored separately in R2.
 - **D4. Variant strategy.** Store **originals only** in R2. Generate variants on demand through the Images binding. Default to **two presets** to conserve the Free transformation budget: `thumb` (width 480, for grid tiles) and `full` (width 1600, for the lightbox), both `fit=scale-down`, `format=auto`. A third mid preset is optional if grid tiles look soft, at the cost of one more transformation per image. Never store resized copies and never resize inside the Worker.
 
 ## 5. Data model
@@ -172,7 +172,11 @@ All endpoints live under `/api`. JSON in, JSON out, except image bytes. Return p
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/images` | Upload one image or video (streamed body). Writes original to R2, extracts dimensions for images, inserts row. Returns the media record. Enforces the 100 MB limit and supported media content types |
+| POST | `/api/images` | Upload one image or video (streamed body) up to the direct-request threshold. Writes original to R2, extracts dimensions for images, inserts row. Returns the media record |
+| POST | `/api/uploads` | Start an authenticated R2 multipart upload. Body includes media type, original filename, and total size; returns an opaque upload id and chunk size |
+| POST | `/api/uploads/:id/parts/:partNumber` | Stream one 16 MiB-or-smaller part to R2. Returns its part number and ETag |
+| POST | `/api/uploads/:id/complete` | Complete the multipart upload, verify the media type, extract metadata, and create the image record |
+| DELETE | `/api/uploads/:id` | Abort an incomplete multipart upload |
 | GET | `/api/images?filter=all\|untagged&cursor=&limit=&sort=` | List media. `filter=all` returns everything, `filter=untagged` returns only items with no collection membership. `sort` accepts `newest`, `oldest`, `capture-newest`, `capture-oldest`, `filename-asc`, `filename-desc`, `size-desc`, `size-asc`, `uploader-asc`, or `uploader-desc` |
 | GET | `/api/images/:id` | Single image with its collection memberships |
 | PATCH | `/api/images/:id` | Update caption and/or capture date (`takenAt`, Unix epoch milliseconds or null) |
